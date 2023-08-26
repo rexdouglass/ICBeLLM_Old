@@ -131,7 +131,7 @@ do_leaf_vars <-   c('interact_decreasecoop', 'interact_deescalate', 'interact_es
 library(tidyverse)
 valid_events_agreed_wide_filtered_long <- valid_events_agreed_wide_filtered %>%
                                           mutate_all(as.character) %>% 
-                                          pivot_longer(cols=-c(crisno, crisis_text, sentence_number_int_aligned, sentence_span_text))
+                                          pivot_longer(cols=-c(crisno,  sentence_number_int_aligned, sentence_span_text))
 
 path_validation_predictions <- "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/predictions_long_validation/"
 files_validation_predictions <- path_validation_predictions %>% list.files(pattern = NULL, all.files = FALSE,full.names = TRUE)
@@ -188,7 +188,7 @@ We first consider recall defined as the probability that a sentence-token coded 
 
 ```{r, output=TRUE}
 library(knitr)
-correct_count_df_byvar %>% kable()
+recall_df_byvar %>% kable()
 ```
 
 ## Precision

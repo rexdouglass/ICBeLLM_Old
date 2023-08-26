@@ -304,27 +304,16 @@ events_agreed_wide_filtered <- events_agreed_wide_filtered %>%
                                mutate_if(is.character, list(~na_if(.,""))) %>% #make sure you replace empty quots with NAs or it'll break everything
                                mutate(event_type_thought = !is.na(think_actor_a) ) %>%
                                mutate(event_type_say = !is.na(say_actor_a) | !is.na(say_actor_b) ) %>%
-                               mutate(event_type_do = !is.na(say_actor_a) | !is.na(say_actor_b) ) %>%
-                               mutate(event_type_do_act = !is.na(do_actor_a) & is.na(do_actor_b) ) %>%
-                               mutate(event_type_do_interact = !is.na(do_actor_a) & !is.na(do_actor_b) ) %>%
-                               mutate(event_type_new = case_when( 
-                                        event_type %>% is.na() ~ "no event",
-                                        event_type_thought  ~ "thought",
-                                        event_type_say  ~ "communication",
-                                        event_type_do_act   ~ "action",
-                                        event_type_do_interact ~ "interaction",
+                               mutate(event_type_do = !is.na(do_actor_a) | !is.na(do_actor_b) ) %>% #if either actor isn't missing it's a do
+                               #mutate(event_type_do_act = !is.na(do_actor_a) & is.na(do_actor_b) ) %>% #we're punting on this now plus it was bugged
+                               #mutate(event_type_do_interact = !is.na(do_actor_a) & !is.na(do_actor_b) ) %>%
+                               mutate(event_type_yesno = ifelse(is.na(event_type), "does not have an event","has an event" )) %>% 
   
-                                        #event_type_say & event_type_do_act ~ "communication about an action",
-                                        #event_type_say & event_type_do_interact ~ "communication about an interactionaction",
-  
-                                        #event_type_thought & event_type_do_act ~ "thought about an action",
-                                        #event_type_thought & event_type_do_interact ~ "thought about interaction",
-                                        #event_type_thought & event_type_say ~ "thought about a communication",
-                                        #event_type_thought & event_type_say & event_type_do_act  ~ "thought about a communication about an action",
-                                        #event_type_thought & event_type_say & event_type_do_act  ~ "thought about a communication about an interaction"
+                               mutate(event_type_armed_vs_unarmed = case_when( 
+                                        !is.na(interact_decreasecoop) | !is.na(interact_increasecoop) | !is.na(act_uncooperative) | !is.na(act_cooperative)   ~ "unarmed",
+                                        !is.na(interact_escalate) | !is.na(interact_deescalate) | !is.na(act_escalate) | !is.na(act_deescalate)   ~ "armed",
                                  )
                                 ) %>%
-                               mutate(event_type_yesno = ifelse(is.na(event_type), "does not have an event","has an event" )) %>% 
                                arrange(count_filled_fields %>% desc()) %>% 
                                #group_by(crisno, sentence_number_int_aligned,event_type_new) %>%  #keeping one of each type
                                # filter(row_number()==1) %>% 
@@ -335,9 +324,7 @@ events_agreed_wide_filtered <- events_agreed_wide_filtered %>%
                                    mutate(
                                      sentence_type_includes_thought = max(event_type_thought),
                                      sentence_type_includes_say = max(event_type_say),
-                                     sentence_type_includes_do = max(event_type_do),
-                                     sentence_type_includes_do_act = max(event_type_do_act),
-                                     sentence_type_includes_do_interact = max(event_type_do_interact),                                     
+                                     sentence_type_includes_do = max(event_type_do)
                                    ) %>%
                                ungroup() %>% 
                                 mutate(do_leaf=coalesce(interact_increasecoop, interact_decreasecoop, interact_deescalate, interact_escalate,
@@ -349,7 +336,6 @@ events_agreed_wide_filtered <- events_agreed_wide_filtered %>%
 #Need to recode event type based on what actors are listed
 events_agreed_wide_filtered <- events_agreed_wide_filtered 
 
-events_agreed_wide_filtered %>% count(event_type_new)
 
 #Take 80% for training
 #10% for validation
@@ -382,6 +368,8 @@ train_events_agreed_wide_filtered %>% saveRDS("/media/skynet3/8tb_a/rwd_github_p
 valid_events_agreed_wide_filtered %>% saveRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/valid_events_agreed_wide_filtered.Rds")
 test_events_agreed_wide_filtered  %>% saveRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/test_events_agreed_wide_filtered.Rds")
 
+table( train_events_agreed_wide_filtered$event_type_armed_vs_unarmed,  useNA = "always")
+table(train_events_agreed_wide_filtered$do_leaf, train_events_agreed_wide_filtered$event_type_armed_vs_unarmed,  useNA = "always")
 
 ```
 
@@ -963,7 +951,9 @@ valid_event <- classify_many_sentences(
 
 ## sentence_type_includes_do_act
 
-```{r, eval=T}
+Skipping now
+
+```{r, eval=F}
 
 
 preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
@@ -986,7 +976,10 @@ valid_event <- classify_many_sentences(
 ```
 
 
+
 ## sentence_type_includes_do_interact
+
+Skipping now
 
 ```{r, eval=T}
 
@@ -1012,9 +1005,38 @@ valid_event <- classify_many_sentences(
 ```
 
 
+I think we should recut this to actions by civilians vs actions by armed. 
+
+So 1 if 
+## unarmed_vs_armed actor
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+
+unarmed - An action by unarmed actors. Think the kinds of policy decisions or interactions made by politicians and civilian leaders. Types of actions might include leadership change, coup, assassination, institutions change, protest or end protest, strike or end strike, riot or end riot, restrict rights or provide rights, terrorism or reduce terrorism, human rights violation or reduce human rights violation, mass killing or reduce mass killing, discussion, meeting, mediation, natural conclusion of diplomacy, sign formal agreement, settle dispute, join war on behalf of, formal military ally, mutual defense pact, economic cooperation, military cooperation, intelligence cooperation, unspecified cooperation, general political support, economic aid, humanitarian aid, military aid, unspecified aid, inspections, release captives, cede territory, allow access.
+
+armed - An action by armed actors. Think the kinds of military or violent behaviors carried out by military units, armies, generals, rebel groups, etc. Types of actions might include raise in alert, mobilization, fortify, exercise, weapons test, deployment to area, show of force, blockade, border violation, no fly zone, battle/clash, attack, invasion/occupation, bombard, declaration of war, join ongoing war, continuation of previous fighting, assert political control over, annex, assert autonomy against.
+
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('event_type_armed_vs_unarmed'), 
+                                       stratify_variables=c('event_type_armed_vs_unarmed'),
+                                       keep_variables=c('event_type_armed_vs_unarmed'),
+                                       training_constraints="sentence_type_includes_do %>% str_detect('^1')", #only train on classified do types
+                                       predicting_constraints="sentence_type_includes_do %>% str_detect('^1')" #only predicting sentences with an act
+                                       )
+
+```
+
 
 
 ## Act
+
 
 
 ## do_kind
@@ -1024,11 +1046,11 @@ valid_event <- classify_many_sentences(
 preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
 
 Begin Codebook
-cooperative - unhelpful or aggresive actions by unarmed actors
-uncooperative - helpful or peaceful actions by unarmed actors
-escalatory - unhelpful or aggresive actions by armed actors
-deescalatory - helpful or peaceful actions by armed actors
-none - The sentence does not describe an event with any of these actions.
+cooperative action by unarmed actors - unhelpful or aggresive actions by unarmed actors
+uncooperative action by unarmed actors - helpful or peaceful actions by unarmed actors
+escalatory action by armed actors - unhelpful or aggresive actions by armed actors
+deescalatory action by armed actors - helpful or peaceful actions by armed actors
+none - The sentence does not describe an action. It may describe a communication or a thought, but does not describe an actor performing an action.
 End Codebook
 "
 valid_event <- classify_many_sentences(
@@ -1169,10 +1191,10 @@ valid_event <- classify_many_sentences(
 preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
 
 Begin Codebook
-cooperative - unhelpful or aggresive actions by unarmed actors
-uncooperative - helpful or peaceful actions by unarmed actors
-escalatory - unhelpful or aggresive actions by armed actors
-deescalatory - helpful or peaceful actions by armed actors
+cooperative - Unhelpful or aggresive actions by unarmed actors
+uncooperative - Helpful or peaceful actions by unarmed actors
+escalatory - Unhelpful or aggresive actions by armed actors
+deescalatory - Helpful or peaceful actions by armed actors
 none - The sentence does not describe an event with any of these actions.
 End Codebook
 "
