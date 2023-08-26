@@ -1,0 +1,215 @@
+---
+title: "ICBeLLM: High Quality International Events Data with Open Source Large Language Models on Consumer Hardware"
+format: html
+editor: source
+execute:
+  echo: false
+  warnings: false
+  output: false
+---
+
+
+
+
+# Abstract
+
+The International Crises Behavior Events (ICBe) ontology provides high coverage over all of the thoughts, communications, and actions in the events that constitute international relations. The disadvantage of that level of detail is high human capital costs in manually applying it to new texts. Whether such an ontolgy is practical for international relations research given limited human and financial resources is a pressing concern. We introduce a working proof of concept showing that ICBe codings can be reliably extracted from new text using the current generation of open source large language models (LLM) running on consumer grade computer hardware. Our solution requires no finetuning and only limited prompt engineering. We detail our solution and present detailed benchmarks against the original ICBe codings. We conclude by discussing the implications of very high quality event coding of any text being within reach of individual researchers and home enthusiasts.
+
+# Introduction
+
+The International Crisis Behavior Events (ICBe) project (Douglass et al. 2022), provides a sentence-event level measurement of every thought, speech, and action described in a historical narrative of an international crisis. 
+
+Detailed codebook
+Hierarchical ontology
+
+Abstraction
+Codebook
+Few shot examples
+Full narrative vs individual sentences
+
+Definitions
+
+
+## Data and Domain
+
+Version 1.1 of the ICBe event dataset (retrieved August 20, 2023,  https://github.com/CenterForPeaceAndSecurityStudies/ICBEdataset/). Agreed-wide version which as the crisis-sentence-actors-eventtype as the unit of analysis. These are the set of all event codings that received majority support across expert coders or were chosen by at least one expert and a majority of novice coders. We further filter out any degenerate sentences (did not begin with a capital letter or end in a period) as these usually reflect parsing errors or some other fragment like section titles or references. We further filter down to one event per sentence, choosing the one with the most coded information.
+
+Take 1 event per sentence. The one with the most details coded.
+Treat missing as None.
+
+# Task Definition
+
+The task of event coding is abstraction, a combination of information extraction and summarization. History suffers from the coastline paradox, such that the finer the resolution of your measurements the more detail you will necessarily find about any one event and between any two events. The observer therefore needs a theoretically justified scale at which an event should be summarized, and conditional on that scale, the list of facts that are relevant for coding. In the context of international events from international crisis, let event abstraction be formalized as follows. A historical episode, H, is demarcated by a period of time [Tstart, Tend] ∈ T, a set of Players p ∈ P, and a set of behaviors they undertook during that time b ∈ B. International Relations, IR, is the system of regularities that govern the strategic interactions that world actors make during a historical episode, given their available options, preferences, beliefs, and expectations of choices made by others. We observe neither H nor IR directly. Rather the Historical Record, HR, produces documents d ∈ D containing some relevant and true (as well as irrelevant and untrue) information about behaviors that were undertaken recorded in the form of unstructured natural language text. The task is to combine informative priors about IR with an unstructured corpus D to produce a series of structured discrete events, e ∈ E, that have high coverage, precision, and recall over what actually took place in history, H.
+
+## Train/Valid/Test Strategy
+
+To prevent information leakage and to generate a representative estimate of out of sample performance on new unseen crises text, we split the ICBe event dataset into training, validation, and test splits that are contiguous in crisis (never places the same crisis in more than one split) and in time (the training set is temporally prior to the validation set which is temporally prior to the test set).
+
+```{r}
+df <- data.frame(
+  set=c('training','validation','test'),
+  n=c(375,50,50),
+  year_start=c(1918,1987,1998),
+  year_stop=c(1987,1998, 2015),
+  events=c(8475,1598,2058)
+)
+
+df
+```
+
+Further check for leakage
+ICBe is not in the training data
+The crisis narratives might be.
+
+
+# Task Description
+
+We describe the task of event coding as event abstraction. History suffers from the coastline paradox, where there more finely you measure the more detail you will necessarily find. Event coding is therefore both a judgement about what happened and also a judgement about at what level of detail to summarize that information. The ICbe project chooses the sentence-event as the discrete unit of detail for a historical narrative about a large historical episode. Each sentence can provide new information about an event, defined as a actor-behavior pair. The ICBe project allowed for up to three distinct events to be introduced in a sentence.
+
+Further, the ICBe ontology recognizes three overarching classes of events: Think, Say, Do. Do events describe a physical action by one or more actors. Say events describe a communication by one or more of the speaker actors to possibly one or more audience actors. Often a say event will be about one do event, e.g. making a threat to invade, or two events, threatening to invade unless a concession is made. Think events provide information about a cognition by one of the actors, e.g. experienced the start of a crisis period. A thought 
+
+We identify three natural language processing tasks, classification, text extraction, and summarization. 
+
+# Language Model
+
+Rather than finetune a model to perform these tasks, we opted for prompt engineering with an existing large language model. We employed an instruction tuned variant of Meta's LAMA2 model called Platypus2 which at the time of this writing was the highest performing open source model on the Hugging Face benchamrking harness. We selected a 4 bit version quantized by AutoGPTQ as the largest model that would fit in our compute budget. We selected two NVIDIA 4090TX cards with a join 48gb of VRAM as our target compute budget as a high end consumer grade. We are confident similar or better performance is obtainable through a commercial API such as GPT4 or GPT3.5, but we wanted to know whether large scale event coding from natural language texts was now feasible at home with a fixed investment in hardware.
+
+# Prompt Strategy
+
+Starting at the root of the ICBe ontology, we designed a simple prompt template that applied to each subsequent node. The template's parts were as follows.
+
+First, a short preamble described which of the three types of NLP tasks was to be performed.
+
+Second, a codebook for the specific question and descriptions of each of the possible answers (if classification)
+
+Third, a stratified sample of examples draw from the training split. 
+
+This is therefore a few shot task, where between 40 and 120 coded examples were provided each time depending on how many could fit in the context window. Examples were only ever drawn from the training sample, and the modeling loop was only ever performed on the validation set, with test sentence see only at the very end. Examples were selected via two criteria. The first was stratified sampling to provide a balanced number of examples across possible answer choices if classification. For open ended answers, we stratified on the first discrete node reached traversing upwards in the ontology towards the root. Second, we sorted sentences based on their restricted Damerau-Levenshtein string distance and kept the most of each strata that would fit in the context window. We could have employed a more sophisticated selection process based on semantic similarity with a different LLM but we wanted to limit the amount of preprocessing required as much as possible.
+
+
+The ICBe ontology was designed as a rooted hierarchy similar to other human classification projects like ImageNet. The coder makes few coarse decisions at the root of the ontology, and then based on the answers proceeds to a small subset of relevant questions that ask about increasingly fine details. A completely unplanned and fortuitous benefit of this approach, is that is also helps LLMs to break the task down this way. The finite context window has to be split between a codebook, example sentences, as much of the full crisis narrative that will fit, and the specific sentence to code. Questions at toward the root are simpler, with fewer options, and have more and more relevant example sentences to draw from as well.
+
+
+
+
+# Results
+
+Performance evaluation for an abstraction task poses many unique challenges. Consider the following success and failure modes. The system could predict exactly the same event down to every detail. The system could predict an additional event that is correct but was not in the original. The system could predict the same event, but choose a different level of detail. The system could produce a semantically similar by stylistically different coding, as was observed between different human coders, e.g. a threat to do something unless a condition is met can also be described as a promise to not do something if a condition is met. This and other examples of unintentional synonymity in the ICBe ontology create challenges for 1 to 1 direct matching. 
+
+## Recall
+
+
+
+It's a little complicated
+You can have more than one event in the test data
+But at most one event in the prediction data
+So it'll get credit if either of the events have some of the same details
+But it'll be losing
+
+
+
+
+	
+"Iraq soon rescinded this demand,"
+
+The large-scale withdrawal of Serb heavy weapons began on 17 February, following an unexpected Russian intervention--an offer to replace the withdrawing Serb soldiers with 800 Russian troops; the first 400 Russians reached Sarajevo on the 20th.
+
+
+```{r}
+
+
+library(tidyverse)
+library(stringi)
+library(glue)
+
+train_events_agreed_wide_filtered <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/train_events_agreed_wide_filtered.Rds")
+valid_events_agreed_wide_filtered <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/valid_events_agreed_wide_filtered.Rds")
+test_events_agreed_wide_filtered  <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/test_events_agreed_wide_filtered.Rds")
+
+do_leaf_vars <-   c('interact_decreasecoop', 'interact_deescalate', 'interact_escalate','interact_increasecoop', 'act_cooperative', 'act_deescalate', 'act_escalate', 'act_uncooperative')
+
+library(tidyverse)
+valid_events_agreed_wide_filtered_long <- valid_events_agreed_wide_filtered %>%
+                                          mutate_all(as.character) %>% 
+                                          pivot_longer(cols=-c(crisno, crisis_text, sentence_number_int_aligned, sentence_span_text))
+
+path_validation_predictions <- "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/predictions_long_validation/"
+files_validation_predictions <- path_validation_predictions %>% list.files(pattern = NULL, all.files = FALSE,full.names = TRUE)
+
+validation_predictions <- files_validation_predictions %>% lapply(function(x) read_csv(x,col_types=rep('c',100) %>% paste0(collapse='') )) %>% 
+  bind_rows() #%>%
+  #mutate( variable = ifelse(variable %in% do_leaf_vars, "do_leaf", variable) )
+
+results <- valid_events_agreed_wide_filtered_long %>% 
+              full_join(
+                validation_predictions %>%
+                  #mutate( variable = ifelse(variable %in% do_leaf_vars, "do_leaf", variable) ) %>% 
+                  rename(sentence_span_text=sentence, name=variable, value_hat=value) 
+                )  %>%
+              mutate( value = ifelse(value=='', NA, value) ) %>%
+              #mutate_all(replace_na, 'none'  ) %>% #treating NA as observed none
+              mutate(value = ifelse(value %>% str_detect("^[0-9]"), value %>% trimws() %>% str_replace_all("[^0-9]$","") %>% as.integer() %>% as.character(), value )  ) %>%
+              mutate(value_hat = ifelse(value_hat %>% str_detect("^[0-9]"), value_hat %>% trimws() %>% str_replace_all("[^0-9]$","") %>% as.integer() %>% as.character(), value_hat )  ) %>%
+              #filter(value!="none") %>% #throwing away nones on the Y side
+              filter(name %in% unique(validation_predictions$variable)) # %>%
+              #dplyr::select(-prompt)
+
+#Consider every possible pairs of individual answers and only count unique Ys and correct matches
+recall_count_df <- results  %>% 
+                    filter(value!="none") %>% #excluding missing values from labeled
+                    filter(name %in% unique(validation_predictions$variable)) %>% 
+                    mutate(value = value %>% strsplit( ";")) %>% 
+                    unnest(value)  %>% 
+                    mutate(value_hat = value_hat %>% strsplit( ";")) %>% 
+                    unnest(value_hat) %>% 
+                    mutate(correct= (value %>% trimws() %>% tolower() )== (value_hat %>% trimws() %>% tolower() )  ) %>%
+                    distinct() %>%
+                    group_by(crisno, sentence_span_text, name) %>%
+                    summarise(
+                      Y_values= unique(value) %>% na.omit() %>% length(),
+                      correct=sum(correct)
+                      )
+
+sum(recall_count_df$correct)/sum(recall_count_df$Y_values) #0.42
+
+recall_df_byvar <- recall_count_df %>%
+                    group_by(name) %>%
+                    summarise(
+                      correct=sum(correct),
+                      Y_values=sum(Y_values),
+                    ) %>%
+                    mutate(perc= (correct/Y_values) %>% round(2)) %>%
+                    arrange(perc %>% desc())
+
+
+```
+
+We first consider recall defined as the probability that a sentence-token coded by a human was also identically coded by the system, $Pr(Token_{LLM} | Token_{H})$. The predictions are unstructured text, and so we normalize both the human coding and predictions.
+
+```{r, output=TRUE}
+library(knitr)
+correct_count_df_byvar %>% kable()
+```
+
+## Precision
+
+Side by side comparison of the two ukraine codings. Go steal the crisis plot from the main paper.
+
+## Semantic Similarity
+
+When it makes errors how close was it? Can do confusion matrix, but also could ask the LLM to autograde.
+
+
+
+# Ablation Results
+
+# Conclusion
+
+Next steps
+-Conditions
+-Multiple events per sentence
+
+
+The ICBe project is an example of right place at the right time. It built an ontology with very high coverage and detail that risk being too unwieldy to justify another large commitment in human coders on new documents. But it completed just in time for the appearance of open source large language models that can easily implement the coding at scale. Both the research investment in ontology design and human labeling of examples made translation to many shot prompt for an LLM a relatively simple exercise.
+
+Given the pace of technological advancement, we expect event projects to continue this trend of shifting human labor towards ontology design. Undervalued definition and codebook authoring has been rebranded as 'prompt engineering' for a new generation of systems with a LLM in the loop rather than a hired human coder. No matter the justification, this is a positive development for empiricism in social science. Definitions can now we chosen at the time of the analysis and rerun overnight rather than precommitted to years earlier in the cycle of grant raising, hiring, training, project management, and eventually publication.

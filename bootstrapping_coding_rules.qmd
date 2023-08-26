@@ -1,0 +1,509 @@
+---
+title: "Bootstrapping Rules"
+format: html
+editor: visual
+---
+
+
+
+
+
+```{r}
+Sys.setenv(RETICULATE_PYTHON = "/home/skynet3/miniconda3/bin/python3")
+library(reticulate)
+use_python("/home/skynet3/miniconda3/bin/python3")
+crisno=196
+library(tidyverse)
+```
+
+## Shorten
+
+```{python}
+
+crisno=196
+
+def shorten_prompt(prompt_func, story, sentence, new_tokens, *args): #pass in the function
+  token_limit=2500 #this was supposed to be 2750 but I'm getting ooms at 2600??
+  #
+  story=story.split('References:')[0].strip() #first just try to shorten the story by removing referneces
+  current_count = generator.tokenizer.encode(prompt_func(story,sentence, *args), return_mask = False).shape[1] + new_tokens
+  if current_count > token_limit:
+    tokens_over=current_count-token_limit
+    final=prompt_func( generator.tokenizer.decode( generator.tokenizer.encode(story)[:,:-tokens_over] )[0] + " ...",sentence, *args) #Ok now we pull exactly the right amount of tokens off
+    final_count = generator.tokenizer.encode(final, return_mask = False).shape[1]
+    if final_count>token_limit:
+      raise Exception("Guessed wrong and too many tokens")
+    #print(generator.tokenizer.encode(final, return_mask = False).shape[1], flush=True)
+    return(final)
+  else:
+    return(prompt_func(story,sentence, *args))
+
+
+
+```
+
+<!--
+https://huggingface.co/stabilityai/StableBeluga2
+Stable Beluga 2 should be used with this prompt format:
+
+### System:
+This is a system prompt, please behave and help the user.
+
+### User:
+Your prompt here
+
+### Assistant:
+The output of Stable Beluga 2
+-->
+
+```{python}
+
+import pandas as pd
+import re
+
+
+#https://github.com/turboderp/exllama/blob/master/example_basic.py
+#!pip install flash-attn --no-build-isolation
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:64"
+
+import os
+os.getcwd()
+import sys
+sys.path.insert(0, "/home/skynet3/Downloads/exllama/")
+from model import ExLlama, ExLlamaCache, ExLlamaConfig
+
+from tokenizer import ExLlamaTokenizer
+from generator import ExLlamaGenerator
+import os, glob
+import torch
+
+def icbe_llm_generator():
+
+  #You are a natural language processing pipeline. You extract entities from text. Parse the text carefully and return every single person, place, and thing mentioned in the text.
+  
+  #I'm processing prompts at about 41 tokens a second and producing responses at about 14 tokens a second
+  #/home/skynet3/Downloads/exllama
+  #python test_benchmark_inference.py -d <path_to_model_files> -p -ppl
+  #python example_chatbot.py -d "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/" -un "Jeff" -p prompt_chatbort.txt
+  #python webui/app.py -d "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/"
+  
+  #python webui/app.py -d "/home/skynet3/Downloads/LLAMA/StableBeluga2-GPTQ/" -gs 17.2,24
+  #python webui/app.py -d "/home/skynet3/Downloads/LLAMA/airoboros-l2-70B-gpt4-1.4.1-GPTQ/" -gs 17.2,24 -length 4096
+  
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/airoboros-l2-70B-gpt4-1.4.1-GPTQ/"
+  model_directory =  "/home/skynet3/Downloads/LLAMA/Platypus2-70B-Instruct-GPTQ/" #https://huggingface.co/TheBloke/Platypus2-70B-Instruct-GPTQ
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/StableBeluga2-GPTQ-4ibt-32g/"
+
+
+  # Directory containing model, tokenizer, generator
+  
+  #model_directory =  "/mnt/str/models/llama-13b-4bit-128g/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/Llama-2-13B-chat-GPTQ/"
+  #model_directory =  "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/LLaMA-30b-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/guanaco-33B-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/falcon-40b-instruct-3bit-GPTQ/"
+  
+  # Locate files we need within that directory
+  
+  tokenizer_path = os.path.join(model_directory, "tokenizer.model")
+  model_config_path = os.path.join(model_directory, "config.json")
+  st_pattern = os.path.join(model_directory, "*.safetensors")
+  model_path = glob.glob(st_pattern)[0]
+  
+  # Create config, model, tokenizer and generator
+  
+  config = ExLlamaConfig(model_config_path)               # create config from config.json
+  config.model_path = model_path                          # supply path to model weights file
+  
+  #Rex's special additions
+  config.set_auto_map("17.2,24") #This did make it allocate to both #https://huggingface.co/TheBloke/guanaco-65B-GPTQ/discussions/21
+  #config.set_auto_map("16.2,24") #"15.5. 24 is what I use.""  https://github.com/turboderp/exllama/issues/191
+  #config.max_input_len = 4096 #4096 
+  config.max_seq_len   = 4096 #I don't understand the difference between these two.
+  config.flash_attn = 4096 #experimenting to see if this works #this one is wire to input length.
+  
+  model = ExLlama(config)                                 # create ExLlama instance and load the weights
+  tokenizer = ExLlamaTokenizer(tokenizer_path)            # create tokenizer from tokenizer model file
+  
+  tokenizer.encode('#') #396
+  tokenizer.eos_token
+  tokenizer.eos_token_id
+  tokenizer.encode(tokenizer.eos_token)
+  
+  cache = ExLlamaCache(model)                             # create cache for inference
+  
+  # monkey patch generator simple to have a custom stop token
+  def generate_simple_rex(self, prompt, max_new_tokens = 128, custom_stop=None):
+      self.end_beam_search()
+      ids, mask = self.tokenizer.encode(prompt, return_mask = True)
+      self.gen_begin(ids, mask = mask)
+      max_new_tokens = min(max_new_tokens, self.model.config.max_seq_len - ids.shape[1])
+      eos = torch.zeros((ids.shape[0],), dtype = torch.bool)
+      for i in range(max_new_tokens):
+        token =  generator.gen_single_token(mask = mask)
+        token_as_string =  generator.tokenizer.decode( token )[0]
+        #print(token_as_string)
+        if custom_stop in token_as_string:
+          #print("breaking!")
+          generator.sequence=generator.sequence[0,:-1] #strip off that last token
+          break
+        for j in range(token.shape[0]):
+          if token[j, 0].item() ==  generator.tokenizer.eos_token_id: eos[j] = True
+        if eos.all(): break
+      text = self.tokenizer.decode(self.sequence[0] if self.sequence.shape[0] == 1 else self.sequence)
+      return text
+    
+  ExLlamaGenerator.generate_simple_rex = generate_simple_rex #monkey patch in our change
+  generator = ExLlamaGenerator(model, tokenizer, cache)   # create generator
+  
+  #generator.end_beam_search()
+  #ids, mask = generator.tokenizer.encode("USER: Print 5 pounds signs, e.g. '#####' ASSISTANT:", return_mask = True)
+  #generator.gen_begin(ids, mask)
+  #token_as_string=tokenizer.decode(generator.gen_single_token(mask = mask))
+  #'#####' #is a token. Hilarious.
+  
+  tokenizer.eos_token_id
+  tokenizer.encode('a')
+  tokenizer.decode(torch.tensor([[2]]))
+  # Configure generator
+  
+  generator.disallow_tokens([tokenizer.eos_token_id])
+  
+  #Here is my attempt to make it as deterministic as possible.
+  #0 temperature throws an error. top_k=1 supposedly ignores everything else and is perfectly deterministic.
+  generator.settings.token_repetition_penalty_max = 1.0 #ok if you lower this to 0 it just repeats over and over again
+  #big picture if you threshold with top_k =1 you can let tthe temp up a bit and p down and get the same result at much much faster perf.
+  generator.settings.temperature = 0.1 #0.01 #0.95
+  generator.settings.top_p = 0.9 #0.99 #https://github.com/turboderp/exllama/issues/81
+  generator.settings.top_k = 1 #1 #https://github.com/turboderp/exllama/issues/81
+  generator.settings.typical = 1.0 #https://github.com/turboderp/exllama/issues/81
+  
+  return(generator)
+
+
+
+
+# Produce a simple generation
+
+#prompt = "Once upon a time,"
+#print (prompt, end = "")
+#output = generator.generate_simple(prompt, max_new_tokens = 100)
+#print(output[len(prompt):])
+#[output]
+#generator.generate_simple_rex("USER: Print 5 pounds signs, e.g. '#####' ASSISTANT:", max_new_tokens = 10, custom_stop="#" ) #
+
+```
+
+# Initialize (only do once or OOM)
+
+```{python}
+import numpy as np
+generator=icbe_llm_generator()
+
+#452 seconds on average for 3090+4080.
+benchmark=False
+from datetime import datetime
+times=[]
+if benchmark:
+  for i in range(5):
+    #generator.gen_begin('') #resets the cache don't have it working apparently #https://github.com/turboderp/exllama/discussions/155
+    start_time = datetime.now()
+    output_benchmark =  generator.generate_simple("### User: List the first 1000 things that come to mind.\n### ASSISTANT:", max_new_tokens = 4000  ) 
+    end_time = datetime.now()
+    times.append(end_time-start_time)
+
+#pip install pyread
+import pyreadr
+crisis_narratives = pyreadr.read_r("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.Rds").popitem()[1]
+print(crisis_narratives.keys())
+
+#Load the story once for the whole thing
+story=crisis_narratives.text[crisno-1] #remember 0 indexing
+
+```
+
+
+# Bootstrap Event/No Event
+
+Write coding rules that would teach an LLM how to correctly code new sentences like these examples below. Concentrate on rules that separate the classes in general rather than any specific example. What are rules that would always help choose the right answer, no matter the sentence?
+
+Here are more sentences, update the rules with new things you learned or that didn't apply as well as you thought they would.
+
+```{r}
+
+library(tidyverse)
+library(stringi)
+library(glue)
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+temp <- events_agreed_wide %>% dplyr::select(-c(crisno:sentence_span_text)) %>% as.matrix()
+condition <- !(is.na(temp) | temp=='')
+
+events_agreed_wide$no_event <- rowSums(condition)==0
+
+ df <- events_agreed_wide %>% dplyr::select(sentence_span_text, no_event) %>% distinct() %>% filter(sentence_span_text %>% str_detect("\\.$")) %>%
+    mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+    mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+    mutate(random=runif(n())) %>%
+    arrange(random) %>%
+    group_by(no_event) %>%
+    filter(row_number()>80 & row_number()<=120) %>% #first 320 sentence 40 at a time
+    arrange(random) %>%
+    ungroup() %>%
+    mutate(row=row_number())
+
+df %>% dplyr::select(correct_answer=no_event, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+    
+```
+
+
+
+https://huggingface.co/garage-bAInd/Platypus2-70B-instruct
+### Instruction:
+
+<prompt> (without the <>)
+
+### Response:
+Iterate through each rule on the list of previous rules and apply whichever abilities are nescessary. Talk out loud and explain your reasoning.
+ Provide no additional commentary before or after the numbered list of rules. Terminate the list immediately with a '@' symbol.
+-The list of rules must end in a '@' sign.
+ You end every response with an at sign (@).
+ 
+   Step 3: Edit the list to better achieve the following goals.
+  -The rules must be general and not overfit to these specific example sentences. They must be designed to fit new out of sample sentences drawn from the same data generating process.
+  -The rules must be highly discriminatory, clearly separating the classes.
+  -The rules should be concise and well written. Save wordcount wherever possible.
+  -The rules should not be redundant or too numerous.
+  
+  
+{no_event_examples}
+
+Step 2: Write coding rules that would teach a large language model to correctly classify a sentence like the examples above with the following properties:
+-The rules must be general and not overfit to these specific example sentences. They must be designed to fit new out of sample sentences drawn from the same data generating process.
+-The rules must be highly discriminatory, clearly separating the classes.
+-The rules should be concise and well written. Save wordcount wherever possible.
+-The rules should not be redundant or too numerous.
+Step 3: Edit the list to better achieve the goals. Collapse similar rules. Remove redundant or unecessary rules.
+Step 4: Print an '@' symbol.
+
+  Write a better set of rules. You must follow these criteria exactly:
+-Do not just copy the original rules but add, remove, and edit rules to increase accuracy. 
+-Confirm you have changed at least one rule, and explain why.
+-Change the rules so that a large language model would now correctly predict the Wrongly Classified Sentences 
+-Maintain rules that likely caused the large language model to correctly predict the Correctly Classified Sentences. 
+-Aim for around 10 rules total.
+-
+
+
+```{r}
+
+library(tidyverse)
+library(stringi)
+library(glue)
+
+events_agreed_long <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed_long.Rds")
+
+sentence_events
+background
+
+df <- events_agreed_long %>% filter(varname %in% c('sentence_events')) %>%
+      dplyr::select(sentence_span_text, value) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(value) %>%
+      filter(row_number()>0 & row_number()<=5) %>% #first 320 sentence 40 at a time
+      arrange(random) %>%
+      ungroup() %>%
+      mutate(row=row_number())
+  
+df %>% dplyr::select(correct_answer=value, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+    
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+temp <- events_agreed_wide %>% dplyr::select(-c(crisno:sentence_span_text)) %>% as.matrix()
+condition <- !(is.na(temp) | temp=='')
+
+events_agreed_wide$no_event <- rowSums(condition)==0
+
+
+set.seed(123)
+
+
+current_rules = "None"
+old_rules <- current_rules
+batches=seq(20,80, by=20)
+for(i in batches){
+  df <- events_agreed_wide %>% dplyr::select(sentence_span_text, no_event) %>% distinct() %>% filter(sentence_span_text %>% str_detect("\\.$")) %>%
+  mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+  mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+  mutate(random=runif(n())) %>%
+  arrange(random) %>%
+  group_by(no_event) %>%
+  filter(row_number()>i & row_number()<=i+20) %>% #first 320 sentence 40 at a time
+  arrange(random) %>%
+  ungroup() %>%
+  mutate(row=row_number())
+  
+  print("\n")
+  print("Current Rules")
+  print(current_rules)
+  
+  prompt = glue(
+  "### Instruction:
+  
+  You are a text classification algorithm that writes a set of rules to instruct a large language model to correctly classifying a sentence into one of a set of categories.
+  
+  ### Begin Category Set
+  no event
+  event
+  ### End Category Set
+  
+  ### Begin Current Rule Set
+  {current_rules}
+  ### End Current Rule Set
+  
+  ### Sentences to Classify
+  {df %>% summarise(output=paste0(row, ') ' , sentence_span_text, collapse='\n'))}
+  ### Sentences to Classify
+  
+  ### Predict Classifications (Assign each numbered sentence a cateogry, formated as '#) classification' on new lines. Print '@' when done.)
+  ### Response:") #needs a space at the end
+    
+  output =  py$generator$generate_simple_rex(prompt, max_new_tokens = as.integer(1000) , custom_stop= '@'  )  
+  current_predictions <- output %>% stri_replace_all_fixed(prompt  , "") %>% trimws()
+  #writeLines(current_predictions)
+  
+  df$y_hat =  (current_predictions %>% str_split("\n"))[[1]] %>% str_replace("^[0-9\\) ]*", "")
+  df$correct <- df$y_hat == df$no_event
+  print("\n")
+  print("Current performance")
+  print(table(df$correct))
+  
+  prompt = glue(
+"### Instruction:
+
+You are a text classification algorithm that writes a set of rules to instruct a large language model to correctly classifying a sentence into one of a set of categories. You finish your final response with an '@' symbol.
+
+### Begin Category Set
+no event
+event
+### End Category Set
+
+### Begin Correctly Classified Sentences
+{df %>% filter(correct) %>% dplyr::select(prediction=y_hat, correct_answer=no_event, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste0(collapse='\n')}
+### End Correctly Classified Sentences
+
+### Begin Wrongly Classified Sentences
+{df %>% filter(!correct) %>% dplyr::select(prediction=y_hat, correct_answer=no_event, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste0(collapse='\n')}
+### End Wrongly Classified Sentences
+
+### Begin Old Rule Set
+{current_rules}
+### End Old Rule Set
+
+Follow these rules exactly and logically.
+Step 1: Critique the old rules. Hypothesize why they caused the large language model to incorrectly classify some sentences while correctly classifying others. Be concise.
+
+Step 2: Propose specific concrete changes to the rules that would improve the large language model's performance next time. Make proposals to add, remove, and edit the previous rules as necessary. Justify your proposals. Be concise.
+
+### Response:"
+  ) #needs a space at the end
+  #writeLines(prompt)
+  output =  py$generator$generate_simple_rex(prompt, max_new_tokens = as.integer(1000) , custom_stop= '@'  )  
+  print("")
+  writeLines(output)
+  #writeLines(output %>% stri_replace_all_fixed(prompt  , "") %>% trimws())
+  newprompt = output %>% trimws() %>% paste("\nStep 3: Write the final numbered list of rules and nothing else. End the list with a '@'.")
+  output2 =  py$generator$generate_simple_rex(newprompt, max_new_tokens = as.integer(1000) , custom_stop= '@'  )  
+  old_rules=current_rules
+  new_rules=output2 %>% stri_replace_all_fixed(newprompt  , "") %>% trimws()
+  writeLines(new_rules)
+}
+
+
+library(diffr) #install.packages('diffr')
+file1 = tempfile()
+writeLines(old_rules, con = file1)
+file2 = tempfile()
+writeLines(current_rules, con = file2)
+p <- diffr(file1, file2, before = "f1", after = "f2")
+p
+
+
+
+
+
+
+
+#Write coding rules that would teach an LLM how to correctly code new sentences like these existing examples. Concentrate on rules that separate the two classes in general rather than any specific example. What are rules that would always help choose the right answer, no matter the sentence?
+#Here are 40 more sentences, update the rules with new things you learned or that didn't apply as well as you thought they would.
+```
+
+
+```{r}
+
+no_thought_examples <- 
+  events_agreed_wide %>% dplyr::select(sentence_span_text, think_actor_a, thinkkind) %>% distinct() %>% filter(sentence_span_text %>% str_detect("\\.$")) %>%
+  mutate(coding = is.na(think_actor_a) %>% case_match( FALSE ~ "description of thoughts", TRUE ~ "no description of thoughts", .default = "no description of thoughts")   ) %>%
+  mutate(example=paste(sentence_span_text,": ",coding)) %>%
+  mutate(random=runif(n())) %>%
+  arrange(random) %>%
+  group_by(coding) %>% #thinkkind
+    filter(row_number()>280 & row_number()<=320) %>% #first 320 sentence 40 at a time
+    arrange(random) %>%
+    pull(example) %>%
+    cat(sep="\n")  
+
+
+
+events_agreed_long <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed_long.Rds")
+
+elong <- events_agreed_long %>%
+          filter(crisno==196) %>% 
+          dplyr::select(sentence_number_int_aligned, sentence_clean, event_number_int, varname_normalized, value_normalized) %>%
+          arrange(sentence_number_int_aligned, sentence_clean, event_number_int, varname_normalized, value_normalized) %>%
+          filter(!is.na(value_normalized) & value_normalized!='') %>%
+          group_by(sentence_number_int_aligned, sentence_clean, varname_normalized) %>%
+          summarise(value_normalized=value_normalized %>% unique() %>% sort() %>% trimws() %>% paste0(collapse="; ")) %>%
+          ungroup()
+
+elong %>% count(varname_normalized) #67 per sentence
+
+
+ewide <- elong %>% 
+          pivot_wider(id_cols=c(sentence_number_int_aligned,sentence_clean), 
+                      names_from=varname_normalized, values_from=value_normalized, 
+                      values_fn= ~ paste0(.x %>% trimws() %>% unique() %>% sort() , collapse=";")) %>%
+          arrange(sentence_number_int_aligned)
+
+
+ewide <- events_agreed_long %>% filter(crisno==196) %>% 
+  dplyr::select(sentence_number_int_aligned, sentence_clean, event_number_int, varname_normalized, value_normalized) %>%
+  pivot_wider(id_cols=c(sentence_number_int_aligned,sentence_clean, event_number_int), 
+              names_from=varname_normalized, values_from=value_normalized, 
+              values_fn= ~ paste0(.x %>% trimws() %>% unique() %>% sort() , collapse=";")) %>%
+  arrange(sentence_number_int_aligned, event_number_int)
+
+dim(ewide)
+
+ewide %>% select(contains("actor"))
+
+elong_actor <- ewide %>% 
+               filter(crisno==196) %>% mutate_all(as.character) %>% 
+               pivot_longer(cols=c(-sentence_number_int_aligned, -sentence_clean, -contains("actor") ) ) %>%
+  filter(!is.na(do_actor_a) | !is.na(do_actor_b) | !is.na( think_actor_a) | !is.na( say_actor_a) | !is.na( say_actor_b) | !is.na( condition_do_actor_a) | !is.na( condition_do_actor_b) )
+  
+
+               dplyr::select(sentence_number_int_aligned, sentence_clean, event_number_int, varname_normalized, value_normalized) %>%
+               group_by(sentence_number_int_aligned, sentence_clean, varname_normalized) %>%
+               filter(!is.na(value_normalized) & value_normalized!='') %>%
+               summarise(value_normalized=value_normalized %>% unique() %>% sort() %>% trimws() %>% paste0(sep="; "))
+  
+
+```
+

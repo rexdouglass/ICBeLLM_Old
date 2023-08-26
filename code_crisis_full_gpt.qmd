@@ -1,0 +1,1734 @@
+---
+title: "Untitled"
+format: html
+editor: source
+---
+
+
+https://huggingface.co/garage-bAInd/Platypus2-70B-instruct
+### Instruction:
+
+<prompt> (without the <>)
+
+### Response:
+
+
+
+# Setup
+
+
+```{r}
+Sys.setenv(RETICULATE_PYTHON = "/home/skynet3/miniconda3/bin/python3")
+library(reticulate)
+use_python("/home/skynet3/miniconda3/bin/python3")
+crisno=196
+```
+
+## Shorten
+
+```{python}
+
+crisno=196
+
+def shorten_prompt(prompt_func, story, sentence, new_tokens, *args): #pass in the function
+  token_limit=2500 #this was supposed to be 2750 but I'm getting ooms at 2600??
+  #
+  story=story.split('References:')[0].strip() #first just try to shorten the story by removing referneces
+  current_count = generator.tokenizer.encode(prompt_func(story,sentence, *args), return_mask = False).shape[1] + new_tokens
+  if current_count > token_limit:
+    tokens_over=current_count-token_limit
+    final=prompt_func( generator.tokenizer.decode( generator.tokenizer.encode(story)[:,:-tokens_over] )[0] + " ...",sentence, *args) #Ok now we pull exactly the right amount of tokens off
+    final_count = generator.tokenizer.encode(final, return_mask = False).shape[1]
+    if final_count>token_limit:
+      raise Exception("Guessed wrong and too many tokens")
+    #print(generator.tokenizer.encode(final, return_mask = False).shape[1], flush=True)
+    return(final)
+  else:
+    return(prompt_func(story,sentence, *args))
+
+
+
+```
+
+<!--
+https://huggingface.co/stabilityai/StableBeluga2
+Stable Beluga 2 should be used with this prompt format:
+
+### System:
+This is a system prompt, please behave and help the user.
+
+### User:
+Your prompt here
+
+### Assistant:
+The output of Stable Beluga 2
+-->
+
+```{python}
+
+import pandas as pd
+import re
+
+
+#https://github.com/turboderp/exllama/blob/master/example_basic.py
+#!pip install flash-attn --no-build-isolation
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:64"
+
+import os
+os.getcwd()
+import sys
+sys.path.insert(0, "/home/skynet3/Downloads/exllama/")
+from model import ExLlama, ExLlamaCache, ExLlamaConfig
+
+from tokenizer import ExLlamaTokenizer
+from generator import ExLlamaGenerator
+import os, glob
+import torch
+
+def icbe_llm_generator():
+
+  #You are a natural language processing pipeline. You extract entities from text. Parse the text carefully and return every single person, place, and thing mentioned in the text.
+  
+  #I'm processing prompts at about 41 tokens a second and producing responses at about 14 tokens a second
+  #/home/skynet3/Downloads/exllama
+  #python test_benchmark_inference.py -d <path_to_model_files> -p -ppl
+  #python example_chatbot.py -d "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/" -un "Jeff" -p prompt_chatbort.txt
+  #python webui/app.py -d "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/"
+  
+  #python webui/app.py -d "/home/skynet3/Downloads/LLAMA/StableBeluga2-GPTQ/" -gs 17.2,24
+  #python webui/app.py -d "/home/skynet3/Downloads/LLAMA/airoboros-l2-70B-gpt4-1.4.1-GPTQ/" -gs 17.2,24 -length 4096
+  
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/airoboros-l2-70B-gpt4-1.4.1-GPTQ/"
+  model_directory =  "/home/skynet3/Downloads/LLAMA/Platypus2-70B-Instruct-GPTQ/" #https://huggingface.co/TheBloke/Platypus2-70B-Instruct-GPTQ
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/StableBeluga2-GPTQ-4ibt-32g/"
+
+
+  # Directory containing model, tokenizer, generator
+  
+  #model_directory =  "/mnt/str/models/llama-13b-4bit-128g/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/Llama-2-13B-chat-GPTQ/"
+  #model_directory =  "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/LLaMA-30b-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/guanaco-33B-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/falcon-40b-instruct-3bit-GPTQ/"
+  
+  # Locate files we need within that directory
+  
+  tokenizer_path = os.path.join(model_directory, "tokenizer.model")
+  model_config_path = os.path.join(model_directory, "config.json")
+  st_pattern = os.path.join(model_directory, "*.safetensors")
+  model_path = glob.glob(st_pattern)[0]
+  
+  # Create config, model, tokenizer and generator
+  
+  config = ExLlamaConfig(model_config_path)               # create config from config.json
+  config.model_path = model_path                          # supply path to model weights file
+  
+  #Rex's special additions
+  config.set_auto_map("17.2,24") #This did make it allocate to both #https://huggingface.co/TheBloke/guanaco-65B-GPTQ/discussions/21
+  #config.set_auto_map("16.2,24") #"15.5. 24 is what I use.""  https://github.com/turboderp/exllama/issues/191
+  #config.max_input_len = 4096 #4096 
+  config.max_seq_len   = 4096 #I don't understand the difference between these two.
+  config.flash_attn = 4096 #experimenting to see if this works #this one is wire to input length.
+  
+  model = ExLlama(config)                                 # create ExLlama instance and load the weights
+  tokenizer = ExLlamaTokenizer(tokenizer_path)            # create tokenizer from tokenizer model file
+  
+  tokenizer.encode('#') #396
+  tokenizer.eos_token
+  tokenizer.eos_token_id
+  tokenizer.encode(tokenizer.eos_token)
+  
+  cache = ExLlamaCache(model)                             # create cache for inference
+  
+  # monkey patch generator simple to have a custom stop token
+  def generate_simple_rex(self, prompt, max_new_tokens = 128, custom_stop=None):
+      self.end_beam_search()
+      ids, mask = self.tokenizer.encode(prompt, return_mask = True)
+      self.gen_begin(ids, mask = mask)
+      max_new_tokens = min(max_new_tokens, self.model.config.max_seq_len - ids.shape[1])
+      eos = torch.zeros((ids.shape[0],), dtype = torch.bool)
+      for i in range(max_new_tokens):
+        token =  generator.gen_single_token(mask = mask)
+        token_as_string =  generator.tokenizer.decode( token )[0]
+        #print(token_as_string)
+        if custom_stop in token_as_string:
+          #print("breaking!")
+          generator.sequence=generator.sequence[0,:-1] #strip off that last token
+          break
+        for j in range(token.shape[0]):
+          if token[j, 0].item() ==  generator.tokenizer.eos_token_id: eos[j] = True
+        if eos.all(): break
+      text = self.tokenizer.decode(self.sequence[0] if self.sequence.shape[0] == 1 else self.sequence)
+      return text
+    
+  ExLlamaGenerator.generate_simple_rex = generate_simple_rex #monkey patch in our change
+  generator = ExLlamaGenerator(model, tokenizer, cache)   # create generator
+  
+  #generator.end_beam_search()
+  #ids, mask = generator.tokenizer.encode("USER: Print 5 pounds signs, e.g. '#####' ASSISTANT:", return_mask = True)
+  #generator.gen_begin(ids, mask)
+  #token_as_string=tokenizer.decode(generator.gen_single_token(mask = mask))
+  #'#####' #is a token. Hilarious.
+  
+  tokenizer.eos_token_id
+  tokenizer.encode('a')
+  tokenizer.decode(torch.tensor([[2]]))
+  # Configure generator
+  
+  generator.disallow_tokens([tokenizer.eos_token_id])
+  
+  #Here is my attempt to make it as deterministic as possible.
+  #0 temperature throws an error. top_k=1 supposedly ignores everything else and is perfectly deterministic.
+  generator.settings.token_repetition_penalty_max = 1.0 #ok if you lower this to 0 it just repeats over and over again
+  #big picture if you threshold with top_k =1 you can let tthe temp up a bit and p down and get the same result at much much faster perf.
+  generator.settings.temperature = 0.1 #0.01 #0.95
+  generator.settings.top_p = 0.9 #0.99 #https://github.com/turboderp/exllama/issues/81
+  generator.settings.top_k = 1 #1 #https://github.com/turboderp/exllama/issues/81
+  generator.settings.typical = 1.0 #https://github.com/turboderp/exllama/issues/81
+  
+  return(generator)
+
+
+
+
+# Produce a simple generation
+
+#prompt = "Once upon a time,"
+#print (prompt, end = "")
+#output = generator.generate_simple(prompt, max_new_tokens = 100)
+#print(output[len(prompt):])
+#[output]
+#generator.generate_simple_rex("USER: Print 5 pounds signs, e.g. '#####' ASSISTANT:", max_new_tokens = 10, custom_stop="#" ) #
+
+```
+
+# Initialize (only do once or OOM)
+
+```{python}
+import numpy as np
+generator=icbe_llm_generator()
+
+#452 seconds on average for 3090+4080.
+benchmark=False
+from datetime import datetime
+times=[]
+if benchmark:
+  for i in range(5):
+    #generator.gen_begin('') #resets the cache don't have it working apparently #https://github.com/turboderp/exllama/discussions/155
+    start_time = datetime.now()
+    output_benchmark =  generator.generate_simple("### User: List the first 1000 things that come to mind.\n### ASSISTANT:", max_new_tokens = 4000  ) 
+    end_time = datetime.now()
+    times.append(end_time-start_time)
+
+#pip install pyread
+import pyreadr
+crisis_narratives = pyreadr.read_r("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.Rds").popitem()[1]
+print(crisis_narratives.keys())
+
+#Load the story once for the whole thing
+story=crisis_narratives.text[crisno-1] #remember 0 indexing
+
+```
+
+# Scrape Crises from Website
+
+```{r}
+
+if(!file.exists("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.Rds")){
+  df <- data.frame(crisno=1:496)
+  df$html <- NA
+  df$text <- NA
+  dim(df)
+  #http://www.icb.umd.edu/updates/v15/dataviewer/ajax/crisis_summary.asp?id=1&q=undefined
+  for(i in 1:496){
+    url <- paste0("http://www.icb.umd.edu/updates/v15/dataviewer/ajax/crisis_summary.asp?id=",i,"&q=undefined")
+    library(rvest)     
+    page=read_html(url)
+    text <- page %>% html_text2()
+    df$text[i] <- text
+  
+  }
+  
+  library(tidyverse)
+  df %>% saveRDS(file="/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.Rds")
+  #library(arrow) ; #install.packages('arrow')
+  #df %>% write_tsv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.tsv")
+}
+```
+
+# step01_chunk_type Chunk the Story
+
+This file iterates over full narratives and 
+1) codes each chunk as a fragment, sentence, or sentences
+2) tries to split the chunk no matter what into a numbered list of sentences
+You then go back to the downloads folder and clean and create a final sentence list.
+
+```{python}
+
+fileout="/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step00_chunk/crisis_"+str(crisno)+".csv"
+
+if os.path.exists(fileout):
+  chunks = re.split("[\r\n]+",story)
+  chunks=[q.strip() for q in chunks if len(q.strip())>0]
+  
+  df = pd.DataFrame({
+    'crisno':crisno,
+    'story':story,
+    'chunk':chunks
+  })
+  
+  df.to_csv(fileout, index=False)
+
+```
+
+# Classify Each Chunk
+
+<!--
+https://huggingface.co/stabilityai/StableBeluga2
+Stable Beluga 2 should be used with this prompt format:
+
+### System:
+This is a system prompt, please behave and help the user.
+
+### User:
+Your prompt here
+
+### Assistant:
+The output of Stable Beluga 2
+-->
+
+```{python}
+
+variable="chunk_type"
+df_chunks = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step00_chunk/crisis_"+str(crisno)+".csv")
+df_chunks['variable']=variable
+df_chunks['output_thoughts']=''
+df_chunks['output_answer']=''
+df_chunks['prompt1']=''
+df_chunks['prompt2']=''
+
+for i, chunk in enumerate(df_chunks.chunk):
+  print(chunk, flush=True)
+  #prompt1=assemble_prompt(variable, sentence=chunk, previous_debate=None, story=None) #Oh wow. When you pass it a broken first sentence it just halucinates a totally different story. Lol
+  #output1 =  generator.generate_simple_rex(prompt1, max_new_tokens = 150 , custom_stop= '#'  ) #
+  #output_debate = output1.replace(prompt1, "").strip().split("\n")[0]
+  prompt1="""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+### Begin Question
+Which of these best describes this quoted text: "%s"
+A) a section heading / title
+B) 1 complete sentence
+C) 2 or more complete sentences?
+### End Question
+
+### Begin Thought Process
+""" % (chunk) 
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = 300 , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice and then stop)\n""" 
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df_chunks.loc[i, 'output_thoughts']=output_thoughts
+  df_chunks.loc[i, 'output_answer']=output_answer
+  df_chunks.loc[i, 'prompt1']=prompt1
+  df_chunks.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df_chunks.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step01_chunk_type/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+# Split Chunks into Sentences
+
+We're going to go ahead and split all of them and then selectively choose based on the above later.
+
+```{python}
+
+variable="chunk_sentences"
+df_chunks = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step01_chunk_type/crisis_"+str(crisno)+".csv")
+df_chunks['variable']=variable
+df_chunks['output_thoughts']=''
+df_chunks['output_answer']=''
+df_chunks['prompt1']=''
+df_chunks['prompt2']=''
+
+for i, chunk in enumerate(df_chunks.chunk):
+  print(chunk, flush=True)
+
+  prompt1="""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+### Begin Text
+"%s"
+### End Text
+
+Split the above text into a numbered list of individual sentences.
+
+### Final Answer (a numbered list of split sentences)
+""" % (chunk) 
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = np.floor((len(chunk)/4) + 100 ).astype('int') , custom_stop= '@'  ) #can't use pounds, some of the sentences have them
+  output_answer = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  df_chunks.loc[i, 'output_answer']=output_answer
+  df_chunks.loc[i, 'prompt1']=prompt1
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df_chunks.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step02_chunk_sentences/crisis_"+str(crisno)+".csv", index=False)
+
+```    
+
+
+# step03_sentences 03 Clean Up Sentence Chunks 
+
+```{r}
+library(tidyverse)
+step01_chunk_type <- read_csv(paste0("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step01_chunk_type/crisis_",crisno,".csv"))
+step02_chunk_sentences <- read_csv(paste0("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step02_chunk_sentences/crisis_",crisno,".csv"))
+
+step01_chunk_type %>% dplyr::select(crisno, chunk_type=output_answer) %>%   mutate(chunk_number=row_number()) %>%
+  left_join(
+    step02_chunk_sentences %>% 
+      mutate(chunk_number=row_number()) %>% 
+      mutate(sentences_raw = strsplit(as.character(output_answer), "\n")) %>%  #[1-9]\\. 
+      unnest(sentences_raw) %>%
+      mutate(sentences_clean= sentences_raw %>% str_replace("^[0-9]*\\.*",'') %>% trimws()) %>%
+
+      mutate(ends_in_comma = sentences_clean %>% str_detect(",$")) %>%
+      mutate(lower_case = sentences_clean %>% str_detect("^[a-z]")) %>%
+      mutate(lower_case_cumsum = cumsum(!lower_case) ) %>%        
+      group_by(chunk_number, chunk, lower_case_cumsum) %>%
+      summarise(sentences_clean = sentences_clean %>% paste0(collapse=" ")) %>% #This repairs sentences oversplit, next line starts with a lower case letter gets pulled up
+            
+      group_by(chunk_number) %>%
+        mutate(chunk_sentence_number=row_number()) %>%
+      ungroup() 
+  ) %>%
+  #Before we commit to numbering them, check for some bad cases
+  mutate(sentences_final = ifelse(chunk_type %>% trimws() %>% str_detect("^A|^B") & chunk_sentence_number==1, chunk, NA))  %>% 
+  mutate(sentences_final = ifelse(chunk_type %>% trimws() %>% str_detect("^C"), sentences_clean, sentences_final) )  %>%
+  mutate(sentences_final= sentences_final %>% trimws()) %>% 
+  filter(!is.na(sentences_final) & sentences_final!='') %>%
+  mutate(sentence_number= row_number()) %>% 
+  dplyr::select(crisno, chunk, sentence_number, sentence=sentences_final) %>%
+  write_csv(paste0("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step03_sentences/crisis_",crisno,".csv"),na="")
+
+```
+
+
+
+# step04_complete_sentence
+
+Treat this as an initial screen. The first screen rules out sentence fragments. This rules out things that are clearly background. Next pass is going to try to get into more detailed counting.
+
+```{python}
+
+variable="complete_sentence"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step03_sentences/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Start Quoted Text
+"%s"
+### End Quoted Text
+
+### Begin Instructions
+Step 1: Describe what constitutes a complete sentence. Include the facts that it a complete sentence has to have a subject and a verb and it must end in a period.
+Step 2: Determine whether the quoted text has a subject, and if so specifically show what the subject is with the relevant substring.
+Step 3: Determine whether the quoted text has a verb, and if so specifically show what the verb is with the relevant substring.
+Step 4: Determine whether the quoted text ends in a period.
+Step 5: Determine whether the text has any properties indicative of not being a sentence, e.g. sounds like a title or a section heading, sounds like part of the reference section, etc.
+Step 6: Based on the above, is the quoted text a complete sentence? (yes/no)
+### End Instructions
+
+### Begin Debate
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# step05_thought_type
+
+```{python}
+
+variable="thought_type"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing
+  if not df['complete_sentence'][i].startswith("Y"):
+    continue
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=200
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are an autoregressive large language model that does exactly as instructed and nothing else. You end every response with an at sign (@). You are an LLM so your only chance to reason is to talk out loud step by step and slowly accumulate evidence building toward a conclusion.
+
+### User:
+
+
+### Begin Codebook
+A) experienced the start of a crisis - The actor perceived the start of a crisis or thought that a crisis had now begun.
+B) experienced the end of a crisis - The actor perceived the end of a crisis or thought that a crisis had now ended.
+C) held a desire - The actor wishes that something would occur.
+D) held a fear - The actor is concerned that something would occur.
+E) held a perception of victory - The actor perceived a victory in the crisis for their side.
+F) held a perception of defeat - The actor perceived a defeat in the crisis for their side.
+G) held territorial aims - The actor had an interest about a territorial goal.
+H) held policy aims - The actor had a thought about a policy it hopes is carried out or not carried out.
+I) held regime change aims - The actor had an interest in another country’s government changing.
+J) held preemption aims - The actor had an interest in taking action before another actor takes action. 
+K) discovered or learned a fact - The actor was made aware of something happening in the world.
+L) became convinced or persuaded of a fact - The actor confirmed that something was or was not true.
+M) no thought
+### End Codebook
+
+### Begin Coding Instructions
+No Thought: If a sentence provides purely factual information without describing a particular actor's emotions, perceptions, aims, or reactions, it is likely to be classified as "no thought". Historical descriptions, background information, and simple timelines typically fit here.
+Start of Crisis: Keywords or phrases that indicate the initiation or beginning of a crisis. Examples include "triggered a crisis" or "crisis began".
+End of Crisis: Keywords or phrases that denote the conclusion or cessation of a crisis. Examples include "crisis ended" or "formal cease-fire took effect".
+Desire: Look for phrases or words that indicate a wish or aspiration for a particular outcome. Examples include "hope", "want", or "proposed".
+Fear: Sentences that contain hints of concern, anxiety, or apprehension, especially if it suggests potential future events.
+Perception of Victory/Defeat: Watch for words like "victory", "win", "successful", "defeat", "loss", or any sentence that describes one party outperforming or overpowering another.
+Territorial Aims: Phrases that indicate territorial interests, disputes, or concerns about geographical areas.
+Policy Aims: Sentences that describe specific decisions, actions, or inclinations regarding political or strategic directives.
+Regime Change Aims: Look for indicators of intentions or actions to change, overthrow, or restructure another nation's government.
+Preemption Aims: Sentences that describe taking anticipatory action to prevent another event or decision.
+Discovery or Learning a Fact: Sentences that indicate a newfound awareness or understanding of an event or information. Keywords might include "discovered", "learned", "triggered a crisis", or "reached".
+Becoming Convinced or Persuaded: This involves an actor becoming certain about something previously unknown or uncertain. Keywords might include "become convinced", "confirmed", or "viewing".
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+", """ % (sentence)
+    ) #{"
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single letter answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step05_thought_type/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# step06_thougth_actor
+
+Thought actor
+
+```{python}
+
+variable="thought_actor"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step05_thought_type/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['thought_type']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing
+  if df['thought_type'][i].startswith("M") or df['thought_type'][i]=='':
+    continue
+  thought_type = df['thought_type'][i]
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=200
+  def prompt1_func(story,sentence, thought_type):
+    return("""### System:
+You are an autoregressive large language model that does exactly as instructed and nothing else. You end every response with an at sign (@). You are an LLM so your only chance to reason is to talk out loud step by step and slowly accumulate evidence building toward a conclusion.
+
+### User:
+
+The task is text extraction. Correctly extract the correct actor(s) from the text.
+
+### Begin Codebook
+Codebook
+A) $Actor(s)$ - Which actor or actors are having a thought in this event? One or more specific actors listed in alphabetical order and separated by semicolons.
+B) no thought actor
+### End Codebook
+
+### Begin Coding Instructions
+Entities Before Verbs:
+
+As before, specific entities or countries mentioned just before a thought-related verb or adjective can be considered actors.
+Examples:
+"Latvia, realizing that..."
+"Kuwait responded on..."
+"India suspected Pakistan-based groups..."
+Informed Entities:
+
+If an entity is stated as having been informed, it can be considered an actor.
+Examples:
+"The Korean army headquarters were also informed..."
+"In September a German diplomat in Washington informed Muskie..."
+Entities with Possessive Adjectives:
+
+If an entity's possession is referred to, consider the entity as the actor.
+Examples:
+"Kuwait's existence"
+"U.S. impotence"
+"Ethiopia's other neighbors"
+Entities After Prepositions:
+
+Specific entities or countries mentioned after a preposition, but before a thought-related verb or adjective, might be actors.
+Examples:
+"...hostility of Ethiopia's other neighbors, was perceived in Mogadishu..."
+"...image of U.S. impotence in the face of a military junta..."
+Entities Associated with Dates:
+
+Entities immediately followed by a date might be an actor, especially if no other entities are closer to the thought action.
+Example:
+"Mussolini met with Hitler on 19 July..."
+Entities Related to Pronouns:
+
+When a pronoun refers to an entity, and that pronoun is closer to the thought-action, then the entity is the actor.
+Examples:
+"Mauritania withdrew from the southern part of Western Sahara in August 1979: it had received..."
+"A Paraguayan counterattack during August 1932 succeeded in recapturing these forts and also pushed the Bolivian army back..."
+Entities in Multi-Country Listings:
+
+When multiple entities are listed, and they are all associated with the same thought action, they should all be extracted as actors.
+Examples:
+"These five states had already committed..."
+"In an infrequent crisis outcome both France and Germany perceived..."
+Ignore Non-Specific Entities:
+
+General terms like "the two countries", "neither party", and "the Arab League" should be ignored as they aren't specific actors.
+Avoid Extracting Entities from Context:
+
+Entities that provide context but aren't directly involved in the thought shouldn't be extracted.
+Example:
+"...concentration of forces against the U.S. in the hope that a victorious battle would permit Japan to end the war..." (Here, "U.S." is context, and "Japan" is the actor)
+Entities in Quotes:
+
+Entities mentioned within quotes that are related to the thought verb or adjective should be considered.
+Example:
+"Given this series of events, all of which were perceived in the Soviet prism as hostile and threatening, the sudden discovery of Exercise Able Archer was interpreted as ominous by Soviet decision makers."### End Coding Instructions
+
+### Begin Story Context
+%s
+### End Story Context
+
+### Apply the above information step by step to reach a final conclusion for the following sentence with the following thought type %s:
+%s
+", """ % (story, thought_type, sentence)
+    ) #{"
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens, thought_type)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print only the extracted actor(s) and then a '@' symbol.)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step06_thougth_actor/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+# step07_speech_type
+
+Codebook
+A) an ultimatum - The actor will take an action unless the recipient fulfills a certain condition.
+B) an offer with conditions - The actor will take an action if the recipient fulfills a certain condition. This not include actually fulfilling the condition, simply communicating that a condition can be fulfilled.
+C) an offer without conditions - The actor makes an offer to do or give something in the future regardless of the recipient’s actions.
+D) an expression of intent - The actor makes a claim about a desire to take action in the future. The goal is to communicate something that may happen in the future.
+E) an expression of threat - The actor makes a claim they will take an undesired action in the future. The intent of the threat is to convince another actor to change their planned course of action.
+F) an expression of promise - The actor makes a claim they will take a desired action in the future. This is distinct from a formally signed agreement that represents an interaction between two actors.
+G) an expression of demand - Making a statement that requires another actor do something.
+H) an expression of appeal / request - Making a statement that asks another actor for something. This includes positive requests like asking for aid or negative requests like withdrawing troops.
+I) an expression of accusation - Making a claim that another actor did something in the past.
+J) an expression of rejection / denial - Indication of a refusal to comply with a previously made statement. This merely represents a statement or speech act, not formally leaving an actual agreement.
+K) an expression of acceptance - Indication of a willingness to comply with a previously made statement.
+L) an expression of disapproval / condemnation - Expressing a negative reaction to a past event. 
+M) an expression of praise - Expressing a positive reaction to a past event. 
+
+
+
+```{python}
+
+variable="speech_type"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if not df['complete_sentence'][i].startswith("Y"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Begin Codebook
+A) an ultimatum - The actor will take an action unless the recipient fulfills a certain condition.
+B) an offer with conditions - The actor will take an action if the recipient fulfills a certain condition. This not include actually fulfilling the condition, simply communicating that a condition can be fulfilled.
+C) an offer without conditions - The actor makes an offer to do or give something in the future regardless of the recipient’s actions.
+D) an expression of intent - The actor makes a claim about a desire to take action in the future. The goal is to communicate something that may happen in the future.
+E) an expression of threat - The actor makes a claim they will take an undesired action in the future. The intent of the threat is to convince another actor to change their planned course of action.
+F) an expression of promise - The actor makes a claim they will take a desired action in the future. This is distinct from a formally signed agreement that represents an interaction between two actors.
+G) an expression of demand - Making a statement that requires another actor do something.
+H) an expression of appeal / request - Making a statement that asks another actor for something. This includes positive requests like asking for aid or negative requests like withdrawing troops.
+I) an expression of accusation - Making a claim that another actor did something in the past.
+J) an expression of rejection / denial - Indication of a refusal to comply with a previously made statement. This merely represents a statement or speech act, not formally leaving an actual agreement.
+K) an expression of acceptance - Indication of a willingness to comply with a previously made statement.
+L) an expression of disapproval / condemnation - Expressing a negative reaction to a past event. 
+M) an expression of praise - Expressing a positive reaction to a past event. 
+N) no communication
+### End Codebook
+
+### Begin Coding Instructions
+Ultimatum: Statements where an actor sets a condition for another party and states a consequence if that condition isn't met. Look for words like "unless" or "if...failed to comply."
+Offer with Conditions: Statements where an actor expresses a willingness to take an action, but this action is dependent on certain conditions being met by the recipient. The presence of conditions is crucial.
+Offer Without Conditions: Statements where an actor expresses a willingness to take an action without setting specific conditions for the recipient.
+Expression of Intent: The actor states a future course of action or plan, especially in relation to the actions of another party. Look for declarative statements about future actions, such as "would" or "will."
+Expression of Threat: The actor indicates a negative or undesirable action they intend to take, often to dissuade another party from a course of action.
+Expression of Promise: Statements where an actor declares a positive future action they will take. This is typically an assurance without a formal agreement.
+Expression of Demand: The actor requires or expects an action from another party. Look for verbs like "demanded" or "asked."
+Expression of Appeal/Request: The actor politely asks or encourages another party to take a particular action. This is softer than a demand.
+Expression of Accusation: The actor claims another party took a particular action in the past.
+Expression of Rejection/Denial: The actor indicates unwillingness or refusal to go along with a previously made statement or course of action. Look for words like "rejected" or "denied."
+Expression of Acceptance: The actor agrees or complies with a previously made statement or course of action.
+Expression of Disapproval/Condemnation: The actor expresses a negative sentiment towards another party's past actions. Look for verbs or nouns like "expressed concern," "blamed," or "protest."
+Expression of Praise: The actor expresses a positive sentiment about a past event or another actor's actions.
+No Communication: Statements that merely describe a situation, event, or background information without clear communication between parties.
+Based on the given examples, a few more nuanced rules can be derived:
+
+Ultimatum often comes with a time frame or a specific consequence.
+Offer with Conditions and Expression of Intent are closely related. The distinction lies in the presence of conditions for the "Offer with Conditions."
+Expression of Threat and Ultimatum are similar. However, the ultimatum sets a clear condition, while a threat might be more general or vague.
+Be cautious about confusing Expression of Intent with No Communication. If there's a clear declaration of a future action related to another actor, it's an expression of intent. If it's merely background information or description, it's no communication.
+Expression of Demand and Expression of Appeal/Request differ in tone. A demand is more forceful, while an appeal/request is softer and might use verbs like "calling" or "asking."
+Expression of Accusation often includes clear blame or identification of a past action, while Expression of Disapproval/Condemnation focuses on a negative sentiment without a clear accusation.
+Expression of Rejection/Denial can sometimes include a secondary action, like providing counterproposals. The focus should be on the rejection or denial itself.
+For No Communication, be cautious about assuming an expression type based on inferred intent. Stick to the explicit content of the statement.
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step07_speech_type/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+# step08_speech_speaker
+
+```{python}
+
+variable="speech_speaker"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step07_speech_type/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['speech_type']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing
+  if df['speech_type'][i]=='' or df['speech_type'][i].startswith("N"):
+    continue
+  speech_type = df['speech_type'][i]
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=200
+  def prompt1_func(story,sentence, speech_type):
+    return("""### System:
+You are an autoregressive large language model that does exactly as instructed and nothing else. You end every response with an at sign (@). You are an LLM so your only chance to reason is to talk out loud step by step and slowly accumulate evidence building toward a conclusion.
+
+### User:
+
+The task is text extraction. Correctly extract the correct speakers(s) from the text.
+
+### Begin Codebook
+A) $speakers(s)$ - Which actor or actors are initiating the communication in this event? One or more specific actors listed in alphabetical order and separated by semicolons.
+B) no speakers
+### End Codebook
+
+### Begin Coding Instructions
+If a sentence contains an explicit actor or actors conducting an action or stating something, extract that actor or actors as the speaker. E.g., "France warned...", the speaker is "France".
+If a sentence mentions multiple actors but doesn't explicitly state which one is conducting the action or making a statement, then list the actors separated by semicolons in alphabetical order. E.g., "Both Nicaragua and Guatemala ended the crisis when...", the speakers are "Guatemala;Nicaragua".
+If a sentence mentions an action or statement without specifying any actor, label it as "no speaker".
+If a sentence has multiple actors and it's clear from the sentence which action belongs to which actor, list them all as separate speakers.
+Sentences that mention historical events, descriptions of locations, or other general knowledge statements with no specific actor taking an action or making a statement, label them as "no speaker".
+If a speaker is defined by a larger entity they belong to, use the larger entity as the speaker. E.g., "Blair... wanted to secure... and persuaded the U.S." The speaker is "United States of America", not Blair.
+If there are several actions by different actors in a sentence, break them down by their actions and list the actors accordingly.
+Observations from New Data:
+
+Generic descriptions, historical contexts, or events where there's no particular actor initiating a communication are all tagged as "no speaker".
+Explicit statements about an actor's actions or decisions are extracted as speakers.
+When a sentence contains multiple statements about multiple actors, all the actors involved are extracted as speakers.
+### End Coding Instructions
+
+### Begin Story Context
+%s
+### End Story Context
+
+### Apply the above information step by step to reach a final conclusion for the following sentence with the following speech type %s:
+%s
+", """ % (story, speech_type, sentence)
+    ) #{"
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens, speech_type)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print only the extracted actor(s) and then a '@' symbol.)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step08_speech_speaker/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+
+
+# step09_speech_audience
+
+```{python}
+
+variable="speech_audience"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step07_speech_type/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['speech_type']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing
+  if df['speech_type'][i]=='' or df['speech_type'][i].startswith("N"):
+    continue
+  speech_type = df['speech_type'][i]
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=200
+  def prompt1_func(story,sentence, speech_type):
+    return("""### System:
+You are an autoregressive large language model that does exactly as instructed and nothing else. You end every response with an at sign (@). You are an LLM so your only chance to reason is to talk out loud step by step and slowly accumulate evidence building toward a conclusion.
+
+### User:
+
+The task is text extraction. Correctly extract the correct audience(s) from the sentence.
+
+### Begin Codebook
+A) $audience(s)$ - Which actor or actors are the communication directed toward in this event? One or more specific actors listed in alphabetical order and separated by semicolons.
+B) no audience
+### End Codebook
+
+### Begin Coding Instructions
+Presence of Action Towards an Entity:
+
+Identify if the sentence contains an explicit action directed towards a specific actor or set of actors.
+E.g., "It responded four days later by seeking-and getting-British assurances..." → United Kingdom
+Conjunctions & Prepositions Indicating Direction:
+
+Look for conjunctions or prepositions that indicate directionality like "to", "toward", "against", "for", etc.
+E.g., "On 21 August 1985 Libya accused Tunisia of participating..." → Tunisia
+Multiple Entities Interacting:
+
+If there are multiple entities mentioned, and it's clear that an action is directed from one entity to the other, then the latter is the audience.
+E.g., "In the meantime, Indonesia had proposed a “solution package” on 9 May..." → Cambodia;Thailand
+Consider Responses & Reactions:
+
+If a sentence discusses a response or reaction from an entity due to an action of another entity, then the former becomes the audience.
+E.g., "Pakistan responded the same day with a denial of Soviet allegations..." → Afghanistan
+Look for Context of Events:
+
+In some sentences, the audience may not be directly mentioned but implied by the event or context.
+E.g., "On 8 January 1943 the Soviets presented Hitler with an ultimatum to surrender at Stalingrad: it was refused." → Germany
+Beware of Neutral Information:
+
+Some sentences merely provide historical context, background, or neutral information without any specific communication directed to a particular audience.
+E.g., "This intrawar crisis for the United States, South Vietnam, and North Vietnam lasted from 7 February to late March 1965." → no audience
+Prior Events & Resolutions:
+
+Sentences that discuss prior agreements, pacts, or resolutions may hint at the involved parties.
+E.g., "Acting on the findings of the commission the League Council, on 24 June 1921, confirmed Finland's sovereignty over the islands..." → Finland;Sweden
+Mentions of Protests, Accusations, or Denials:
+
+When an entity protests, accuses, or denies something, it's often directed at another entity.
+E.g., "A Honduran protest was rejected by Nicaragua..." → Nicaragua
+Implied Audiences & Background Knowledge:
+
+Some sentences might require background knowledge to discern the correct audience.
+E.g., "The attacks left over 3,000 people dead in the United States, the largest peacetime losses suffered by the US since Pearl Harbor." → no audience (Although it's about an attack on the U.S., there's no communication directed towards the U.S. in the context of the sentence.)
+Multiple Entities Without Clear Direction:
+
+In cases where multiple entities are mentioned but there's no clear direction of communication, refrain from assuming an audience.
+E.g., "UN involvement was minimal: the Secretary-General offered his good offices to settle the dispute, but this had little effect." → Cambodia;United States of America
+
+Final entity list should only include members of the audience.
+### End Coding Instructions
+
+### Begin Story Context
+%s
+### End Story Context
+
+### Apply the above information step by step to reach a final conclusion for the following sentence with the following speech type %s:
+%s
+", """ % (story, speech_type, sentence)
+    ) #{"
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens, speech_type)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print only the extracted actor(s) and then a '@' symbol.)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step09_speech_audience/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# step10_civilian_armed
+
+# step10_escalatory_de-escalatory
+
+```{r}
+
+variable="act_cooperative"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if not df['complete_sentence'][i].startswith("Y"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Begin Codebook
+A) escalatory action by an armed actor - armed actor performed an action that increased aggression
+b) de-escalatory action by an armed actor - armed actor performed an action that reduced aggression
+c) no action by an armed actor
+### End Codebook
+
+### Begin Coding Instructions
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step10_act_cooperative/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# step10_act_cooperative
+
+```{python}
+
+variable="act_cooperative"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if not df['complete_sentence'][i].startswith("Y"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Begin Codebook
+---Government
+A) leadership change - Election, resignation, or appointment. An election or other peaceful transition in top executive leadership of the country. This does not include a change in lower level leadership like ambassadors or diplomats.
+B) institutions change - Peaceful regime change from one kind of government to another. This involves a change in the entire regime as opposed to just the top leadership and does not include protests or demands for secession.
+---By Civilians
+C) end protest - Ended an act of organized public dissent.
+D) end strike - Ended a protest that took the form of refusing to work. 
+E) end riot - Ended organized group violence. 
+---Against Civilians
+F) provide rights - The government increased the provision of rights to their citizens through things like expanded political or civil rights. 
+G) reduce terrorism - The actor reduced indiscriminate attacks on civilians designed to incite fear.
+H) reduce human rights violation - The actor reduced violations of another actor’s basic human rights.
+I) reduce mass killing - The actor reduced indiscriminate killing of another group’s population.
+J) evacuate -The actor withdrew civilians.
+K) no cooperative acts by unarmed actors
+### End Codebook
+
+### Begin Coding Instructions
+Geopolitical Events and Actions:
+
+Any mention of geopolitics, tensions between nations, declarations, missile tests, or events where countries are taking stances against each other (with no cooperative act towards civilians) should be classified as "no cooperative domestic civilian act."
+Examples: "The U.K. was deeply involved in this crisis.", "The League of Nations was not involved in this crisis.", "France reacted the same day by dispatching a warship to the area and strengthening its troop positions."
+Change in Leadership:
+
+Look for keywords such as "appointment", "resignation", "election", or mention of changes at the top executive level of leadership in a country.
+Example: "The Italian response, on 24 July, was the dismissal of Mussolini by the king, at a meeting of the Fascist Grand Council, and the appointment of a new government under Marshal Pietro Badoglio."
+Peaceful or Formal Agreements:
+
+Look for phrases such as "signed", "agreement", "peace mission", "dialogue", "talks", or "discussion". Depending on the context, they might be a new code not previously covered in the original list.
+Examples: "On 15 May, Assistant Secretary of State Christina Rocca made a trip to India and Pakistan on a peace mission.", "A formal agreement, the Ankara Accord, was voluntarily signed on 20 October 1921 ending the Cilician crisis-war"
+Ending Protests, Strikes, and Riots:
+
+Any mention of ending or stopping protests, strikes, or riots. Look for keywords like "end", "terminate", "overcome", or "halted".
+Examples: "On 25 September the insurgents were defeated and factories and businesses reopened in Nicaragua, terminating its first crisis.", "The march began on the 6th but was halted by King Hassan on the 10th, a day after Spain agreed to exclude Algeria from negotiations over the future of Western Sahara."
+Humanitarian Acts:
+
+Keywords such as "reduce", "cease", "rights", or mention of actions taken to decrease indiscriminate attacks, killings, or violations against civilians should be categorized appropriately.
+Examples: "Israel public opinion prompted its leaders to decide to refrain from attacks on civilian targets in the future.", "In the following days President Carter sent two representatives, Ramsey Clark and William Miller, to Iran to seek to secure the release of the hostages."
+Rescue Operations:
+
+Any action or plan to save or rescue an individual or group.
+Example: "Mussolini, who had been held prisoner near Rome, was rescued by German troops"
+Specificity:
+
+If the sentence provides a specific act that doesn’t generalize to other categories, it may need its own unique classification.
+Examples: "Mussolini, who had been held prisoner near Rome, was rescued by German troops", or "The Italian response, on 24 July, was the dismissal of Mussolini by the king", where specific events like "rescue mussolini from being prisoner" or "appointment of marshal pietro badoglio" are more fitting than broader categories.
+Absence of Action:
+
+If the sentence is descriptive and does not hint towards any cooperative or non-cooperative act towards civilians or any leadership change, classify it under "no cooperative domestic civilian act".
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step10_act_cooperative/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+# step11_act_cooperative
+
+```{python}
+
+variable="act_cooperative"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if not df['complete_sentence'][i].startswith("Y"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Begin Codebook
+---Government
+A) coup - An attempt was made to overthrow the current regime and/or its leaders.
+B) assassination - An attempt was made to murder the current regime leader.
+---By Civilians
+C) protest - Act of organized public dissent.
+D) strike - Protest that takes the form of refusing to work.
+E) riot - Organized group violence.
+---Against Civilians
+F) restrict rights - The actor took away or challenged the rights of another group of people. This could include the passage of restrictive laws or suspension of previously allowed rights. Organized groups rioting against the government should be coded here.
+G) terrorism - The actor engaged in the indiscriminate killing of civilians to incite fear and achieve a political goal.
+H) human rights violation - The actor violated the basic human rights of a group of people.
+I) mass killing - Intentional and indiscriminate murder by the government of a group of civilians. This is distinct from accusations of genocide since the actor has to be the one committing the genocide, not the one being accused.
+---None of the Above
+J) no uncooperative acts by unarmed actors
+### End Codebook
+
+### Begin Coding Instructions
+Government
+
+Coup: Sentences that indicate an attempt to overthrow a current regime or its leaders.
+Assassination: Sentences that indicate an attempt was made to murder a current regime leader.
+By Civilians
+
+Protest: Look for keywords like "protest", "demonstration", or "dissent".
+Strike: Sentences mentioning refusal to work, or other indicators like "paralyzed", particularly in an economic context.
+Riot: Look for phrases indicating group violence, not necessarily against the government.
+Against Civilians
+
+Restrict Rights: Sentences indicating the removal or challenge of rights, such as laws, suspension, or rioting against the government.
+Terrorism: Keywords such as "terrorist attacks", "indiscriminate killing", and "incite fear".
+Human Rights Violation: Look for violations but not necessarily killing, possibly keywords related to torture, imprisonment, or abuse.
+Mass Killing: Look for phrases indicating large numbers of deaths, particularly by the government against civilians.
+None of the Above
+
+No Uncooperative Acts by Unarmed Actors: Sentences that seem to discuss geopolitical, diplomatic, or historical events but don't fit into other categories.
+Sever Diplomatic Relations: Any indications of ending or suspending diplomatic ties between entities.
+Prolonging Conflict: Sentences indicating the intentional extension of a conflict.
+Change in Leadership: Sentences indicating a shift in the leadership of a region or organization, but not necessarily through force or a coup.
+Economic Blockade/Sanction: Sentences discussing economic actions such as blockades or sanctions to exert pressure.
+Propaganda: Sentences indicating the broadcasting or dissemination of information, often biased, to promote a point of view.
+Special Cases
+
+Assassination (of civilian): An assassination of a notable civilian figure, not necessarily a government leader.
+Attempted Assassination: Sentences that discuss an attempt to assassinate but didn't necessarily succeed.
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step11_act_uncooperative/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+
+# step12_interact_decreasecoop
+
+```{python}
+
+variable="interact_decreasecoop"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if not df['complete_sentence'][i].startswith("Y"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Begin Codebook
+---Government
+A) break off negotiations - The actor cuts off ongoing negotiations with another actor.
+B) withdraw diplomats - The actor physically removes its diplomats/representatives from another country.
+---Violate Agreement
+C) violate terms of agreement - The actor took an action it had formally and legally agreed not to take. Conversely, the actor may have refused to take an action that it had formally and legally agreed to take.
+---Annul Agreement
+D) political succession - The actor declared itself independent and sovereign from some larger polity that previously held claim to it.
+E) leave alliance - The actor left a military alliance it had with another country.
+F) terminate treaty - The actor tore down a treaty such that none of its provisions were considered legally binding.
+---Cease Mutual Cooperation
+G) end economic cooperation - The actor halted economic cooperation or imposed economic sanctions.
+H) end military cooperation - The actor ceased working with another actor on military matters, such as the mutual transfer of military equipment.
+I) end intelligence cooperation - The actor ceased working with another actor on intelligence matters, such as the mutual transfer of intelligence.
+J) end unspecified cooperation - The actor ceased working with another actor on unspecified of ambiguous matters.
+---End Aid
+K) end economic aid - The actor ceased providing economic aid.
+L) end humanitarian aid - The actor ceased providing humanitarian aid.
+M) end military aid - The actor ceased providing military aid.
+N) end unspecified aid - The actor ceased providing an undefined or ambiguous type of aid.
+---Added Post-Coding
+O) deployment to area - No military personnel were moved from one location to another in preparation for battle or work.
+P) end access - Prevent access to an area or across a border, usually for civilian populations. Distinct from a military blockade.
+Q) expel - The actor forced individuals out of a specific geographic area.
+R) propaganda - The actor undertook a systematic effort to spread information to a general audience for the purpose of promoting some cause.
+S) imprison - The actor detained and confined specific individuals, often in a prison.
+-None of the Above
+T) no uncooperative interactions by unarmed actors
+### End Codebook
+
+### Begin Coding Instructions
+Government Actions:
+
+A sentence that mentions the cessation of ongoing talks or discussions will fall under "break off negotiations."
+A sentence that talks about the physical removal or departure of official representatives, such as ambassadors, will be classified as "withdraw diplomats."
+Violate Agreement:
+
+Mention of an action taken (or not taken) contrary to a formal commitment or pledge implies "violate terms of agreement."
+Annul Agreement:
+
+Sentences that depict a declaration of independence or autonomy, especially from a larger governing body, will be tagged as "political succession."
+Departure from a previously established military relationship or partnership is "leave alliance."
+An outright dismissal or rejection of previously agreed-upon terms or arrangements will be "terminate treaty."
+Cease Mutual Cooperation:
+
+Halt in economic exchanges, interactions, or imposition of economic restrictions will be "end economic cooperation."
+Discontinuation of mutual military-related activities or exchanges can be classified as "end military cooperation."
+Termination of sharing of secret information between countries or agencies falls under "end intelligence cooperation."
+If the nature of the cooperation isn't clear, it's "end unspecified cooperation."
+End Aid:
+
+Sentences discussing a halt in providing financial or economic assistance will be "end economic aid."
+Ceasing of provisions like food, shelter, or medical aid can be "end humanitarian aid."
+Stopping the supply of military equipment, troops, or similar assistance will be "end military aid."
+If it's not specified what kind of aid is stopped, it's "end unspecified aid."
+Added Post-Coding:
+
+Movement or relocation of troops or military forces, especially for potential conflict or duties, is "deployment to area."
+Prohibiting the movement or entry of people, especially civilians, into an area will be "end access."
+Forcing individuals to leave a specific place or country can be tagged as "expel."
+A systematic spread of information for promoting a cause or ideology is "propaganda."
+Detention or confinement of individuals, especially in a formal setting like prison, can be classified as "imprison."
+None of the Above:
+
+If a sentence doesn't display a direct conflict or uncooperative behavior by the actors, especially if they are unarmed or not in direct contention, it falls under "no uncooperative interactions by unarmed actors."
+Other:
+A mention of verification or checking procedures related to compliance or accusations will be "inspections."
+Mention of organizations or institutions undergoing a significant change or reform will be "institutions change."
+Large gatherings or outbursts expressing disapproval, dissent, or demands can be "protest."
+Discussions, dialogues, or diplomatic measures for conflict resolution will be "discussion."
+Measures that limit the rights or freedoms of people can be "restrict rights."
+Mention of the intentional killing of a prominent individual for political reasons can be "assassination."
+A comprehensive restriction or cessation of movement or trade to or from an area, especially due to conflict, will be "blockade."
+
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step12_interact_decreasecoop/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# step13_interact_increasecoop
+
+```{python}
+
+variable="interact_increasecoop"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if not df['complete_sentence'][i].startswith("Y"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Begin Codebook
+-Diplomacy-
+A) discussion - Informal diplomacy that does not involved in person or face to face meetings between political leaders or representatives.
+B) meeting - More formal diplomacy that involves in person or face to face meetings between political leaders or representatives.
+C) mediation - The actor engaged in intervention in a dispute with the intent to resolve it. The initiator is the mediating actor and the belligerents are the recipients of that mediation.
+D) natural conclusion of diplomacy - Diplomacy concluded in a natural manner. 
+-Legal Agreements-
+E) sign formal agreement - The actor agreed to a legally binding agreement with another actor(s).
+F) settle dispute - The actor came to an informal arrangement that ended the dispute on satisfactory terms.
+G) join war on behalf of - The actor joined the conflict to aid an ally.
+H) formal military ally - Formal treaty between countries for security cooperation.
+I) mutual defense pact - Pact that requires countries to come to each other’s aid militarily if either is attacked by a third party.
+-Mutual Cooperation-
+J) economic cooperation - The actor and the target exchanged economic goods or services.
+K) military cooperation - The actor and the target exchanged military goods or services.
+L) intelligence cooperation - The actor and the target provided or exchanged intelligence, information, data, or knowledge.
+M) unspecified cooperation - The actor and the target exchanged unspecified or ambiguously specified goods or services.
+-Directed Aid and Support-
+N) general political support - Support that may not be material aid, but instead an expression of support or assistance
+O) economic aid - The voluntary transfer of economic resources from one country to another.
+P) humanitarian aid - The voluntary transfer of material and logistic assistance to people in need, often aiming to alleviate suffering from a disaster.
+Q) military aid - The voluntary transfer of material to assist a country in its defense efforts.
+R) unspecified aid - The voluntary transfer of unspecified or ambiguous material from one country to another.
+-Added Post-Coding-
+S) inspections - The actor allowed inspections or investigations.
+T) release captives - The actor released hostages, prisoners, or other captives.
+U) cede territory - The actor formally transfers or surrenders territory.
+V) allow access - The actor allowed access to an area or across a border, usually for civilian populations. Distinct from ending a military blockade. 
+W) no cooperative interactions by unarmed actors
+### End Codebook
+
+### Begin Coding Instructions
+No Cooperative Interactions by Unarmed Actors: This classification seems to cover a broad range of statements where no specific act of cooperation or action is detailed between countries or entities. For example:
+
+Descriptions of past events without any direct actor intervention.
+Declarations or statements without direct cooperative actions.
+Descriptions of confrontations or threats that don't result in any specific cooperative action.
+Summaries of past conflicts or crises without elaboration on cooperative acts.
+Ally: These sentences reference actions that signify allyship, commitment, or political support without indicating any specific formal treaty or pact.
+
+Sentences that mention building alliances or reaffirming commitments.
+Any reference to maintaining forces or decisions to stand by another country in a crisis.
+Deployment to Area: This seems to cover any mention of sending troops, peacekeepers, or forces to an area, whether for intervention, peacekeeping, or other reasons.
+
+Inspections: Any mention of allowing investigations, inquiries, or verification processes, often conducted by third-party entities like the UN.
+
+Mobilization: It refers to the act of preparing or moving military forces for an operation or in response to an event.
+
+Cease Fire: Refers to agreements or actions that indicate a pause or stop in active fighting or confrontations.
+
+Allow Access: When a country or actor permits another entity to enter or pass through a specific region or territory.
+
+Leadership Change: Sentences indicating a change in governance, whether through elections, resignation, or other methods.
+
+Lower Alert: Statements indicating a de-escalation in terms of military or defensive readiness.
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step13_interact_increasecoop/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+# step14_interact_escalate
+
+```{python}
+
+variable="interact_escalate"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if not df['complete_sentence'][i].startswith("Y"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Begin Codebook
+---Preparation
+A) raise in alert - The actor increased the state of readiness of its armed forces. This occurred as part of an interaction with another actor.
+B) mobilization - The actor prepared military forces for conflict. This occurred as part of an interaction with another actor.
+C) fortify - The actor strengthened or built up their military forces. This occurred as part of an interaction with another actor.
+D) exercise - The actor engaged in military training or practice. This occurred as part of an interaction with another actor.
+E) weapons test - The actor engaged in testing weaponry to determine weapon effectiveness. This occurred as part of an interaction with another actor.
+---Maneuver
+F) deployment to area - Troops were moved one location to another. This does not involve actual direct combat since that would be an interaction, not a unilateral action.
+G) show of force - The actor demonstrated its military capacity as warning or to intimidate. This occurred as part of an interaction with another actor.
+H) blockade - The actor restricted the target’s movement, mobility, or access outside of direct combat. This occurred as part of an interaction with another actor.
+I) border violation - The actor threatened the target’s territorial sovereignty or control. This occurred as part of an interaction with another actor.
+J) no fly zone - The actor restricted the target’s movement, mobility, or access in the air outside of direct combat. This occurred as part of an interaction with another actor.
+---Combat
+K) battle/clash - The actor engaged in conflict with the target. This occurred as part of an interaction with another actor.
+L) attack - The actor initiated conflict with the target. This occurred as part of an interaction with another actor.
+M) invasion/occupation - The actor entered with the intention of taking over some area of the target's territory. This is distinct from a speech act declaring an intent or desire to invade and instead only includes the actual invasion itself.
+N) bombard - The actor bombed the target. This occurred as part of an interaction with another actor.
+O) declaration of war - The actor declared war against its target for the first time. This occurred as part of an interaction with another actor.
+P) join ongoing war - The actor joined an ongoing war between other parties. The ‘receiver’ in this instance is the enemy/opponents of the actor.
+Q) continuation of previous fighting - Fighting picked back up or re-emerged. This occurred as part of an interaction with another actor.
+---Autonomy 
+R) assert political control over - The actor reasserted control over a territory where it previously had strong control (ie a colonial power). This occurred as part of an interaction with another actor.
+S) annex - The actor annexed a portion of its territory by giving up its claim of sovereignty. This occurred as part of an interaction with another actor.
+T) assert autonomy against - The actor reasserted its sovereignty and internal control vis-a-vis the target/recipient
+U) no escalatory interaction by armed actors
+### End Codebook
+
+### Begin Coding Instructions
+"No escalatory interaction by armed actors":
+
+This category encompasses a wide range of actions or situations where there's no clear escalation or militarized conflict.
+Rule: Sentences that describe diplomatic, political, or non-militarized actions or inactions, as well as statements and declarations without accompanying militarized actions, fit here.
+"Declaration of war":
+
+Sentences that explicitly mention or strongly imply that one country informs another of an impending declaration of war fit this category.
+Rule: Sentences with clear verbiage such as "declare war" or synonyms thereof should be categorized here.
+"Border violation":
+
+Incursions, unauthorized entries, and activities near or across territorial boundaries without explicit combat can be considered as border violations.
+Rule: Look for phrases like "incursions," "entering territory," or any activity that threatens the territorial boundaries of another state.
+"Fortify":
+
+Sentences that talk about strengthening defenses, but not necessarily mobilizing for imminent combat, fit here.
+Rule: Look for references to arms, equipment, or strengthening of military capabilities without direct mentions of deployment or combat.
+New category - "End economic cooperation":
+
+Sentences that describe a country ending or severing economic ties or imposing sanctions on another fit here.
+Rule: Look for actions related to embargoes, sanctions, or cessation of economic agreements.
+New category - "Human rights violation":
+
+Sentences detailing atrocities or violations of international law in terms of human rights but not necessarily combat situations fit this category.
+Rule: Look for phrases related to atrocities, mass killings, or other large-scale rights violations.
+New category - "Imprison":
+
+This can capture situations where individuals or groups are imprisoned due to political, diplomatic, or military tensions.
+Rule: Sentences that describe arrests, imprisonments, or detentions in the context of inter-state tensions should be categorized here.
+New category - "Decolonize":
+
+This would account for actions related to decolonization processes or the transfer of sovereignty.
+Rule: Phrases that describe the transfer of territories, sovereignty changes, or related actions like UN interventions in sovereignty matters fit this category.
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step14_interact_escalate/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+# step15_interact_deescalate
+
+```{python}
+
+variable="interact_deescalate"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if not df['complete_sentence'][i].startswith("Y"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Begin Codebook
+---Preparation
+A) lower alert - The actor signaled a crisis or conflict was now less likely.
+B) de-mobilization - The actor halted or undid preparation of military forces for conflict.
+C) remove fortify - The actor weakened their military forces or took down defenses.
+D) end exercise - The actor ceased military training or practice. 
+E) end weapons test - The actor ceased testing weaponry. 
+---Maneuver
+F) withdraw from area - Troops were taken out of an area.
+G) withdraw behind border - Troops left a previously occupied area of the opponent's territory.
+H) end blockade - The actor stopped restricting the target's movement, mobility, or access.
+---Combat
+I) cease fire - The actor stopped engaging in active combat and is no longer attacking. This can occur through an end of conflict as well as a formal declaration/agreement between actors to stop violence.
+J) retreat - The actor withdrew forces during combat as a result of superior enemy firepower or after a defeat.
+---Strategic
+K) surrender - The actor ceased resistance to the opponent and submitted to their authority.
+L) declaration of peace - The actor declared an end to the conflict in favor of mutual peace.
+M) withdraw from war - The actor ceased involvement in military hostilities.
+N) switch sides in war - The actor changed its allies/opponents in the conflict.
+---Autonomy
+O) reduce control over - A colonist country (coded as initiator) provided more rights and autonomy to its colony (coded as target)
+P) decolonize - A colonist country (coded as initiator) withdrew from a colony (coded as target), leaving it independent
+Q) no de-escalatory interaction by armed actors
+### End Codebook
+
+### Begin Coding Instructions
+If the sentence is primarily stating a historical fact without clear mention of a de-escalatory action by an armed actor, it should be classified as 'no de-escalatory interaction by armed actors'.
+Words like 'end', 'ceased', 'halted', 'stopped', and 'withdrew' are strong indicators of some form of de-escalatory action. However, their exact classification depends on the context.
+
+For Preparation:
+
+A) 'lower alert' if the sentence mentions reducing chances of a conflict.
+B) 'de-mobilization' if it indicates halting or undoing military preparation.
+C) 'remove fortify' if there is mention of weakening forces or defenses.
+D) 'end exercise' when there's a mention of cessation of military training.
+E) 'end weapons test' if testing of weaponry is stopped.
+For Maneuver:
+
+F) 'withdraw from area' if troops are mentioned to leave an area.
+G) 'withdraw behind border' if troops leave the opponent's territory.
+H) 'end blockade' when restricting movement or access is stopped.
+For Combat:
+
+I) 'cease fire' when active combat or attacks are stopped.
+J) 'retreat' when forces withdraw due to enemy's superior power.
+For Strategic:
+
+K) 'surrender' when there's submission to the opponent.
+L) 'declaration of peace' when peace is explicitly declared.
+M) 'withdraw from war' when ceasing involvement in military hostilities is mentioned.
+N) 'switch sides in war' when changing allies/opponents in a conflict is indicated.
+For Autonomy:
+
+O) 'reduce control over' if more rights or autonomy is given to a colony.
+P) 'decolonize' when withdrawal from a colony is stated.
+Other:
+
+Q) 'no de-escalatory interaction by armed actors' if no clear deescalation is mentioned.
+'military cooperation' when there's support or collaboration between entities.
+'battle/clash' when a combat situation is mentioned without clear deescalation.
+'release captives' when hostages or captives are released.
+'sign formal agreement' when a peace or non-hostility agreement is signed.
+'evacuate' when there's mention of moving people out of an area due to conflict.
+'cede territory' when territory is handed over or relinquished to another party.
+
+Other Observations and Rules:
+
+Sentences that describe general events, dates, or places without any de-escalatory actions (like most of the ones classified under 'no de-escalatory interaction by armed actors') should be labeled as 'Q'.
+Sentences mentioning an agreement or a pact between nations without specifying de-escalatory military actions should be observed closely, as they could be either 'sign formal agreement' or 'Q'.
+Sentences that indicate a nation or actor giving up territory or land should be classified as 'cede territory'.
+If there is mention of releasing people (like hostages), classify as 'release captives'.
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step14_interact_escalate/crisis_"+str(crisno)+".csv", index=False)
+
+```

@@ -1,0 +1,2392 @@
+---
+title: "Untitled"
+format: html
+editor: source
+---
+
+
+https://huggingface.co/garage-bAInd/Platypus2-70B-instruct
+### Instruction:
+
+<prompt> (without the <>)
+
+### Response:
+
+
+
+# Setup
+
+
+```{r}
+Sys.setenv(RETICULATE_PYTHON = "/home/skynet3/miniconda3/bin/python3")
+library(reticulate)
+use_python("/home/skynet3/miniconda3/bin/python3")
+crisno=196
+```
+
+## Shorten
+
+```{python}
+
+crisno=196
+
+def shorten_prompt(prompt_func, story, sentence, new_tokens, *args): #pass in the function
+  token_limit=2500 #this was supposed to be 2750 but I'm getting ooms at 2600??
+  #
+  story=story.split('References:')[0].strip() #first just try to shorten the story by removing referneces
+  current_count = generator.tokenizer.encode(prompt_func(story,sentence, *args), return_mask = False).shape[1] + new_tokens
+  if current_count > token_limit:
+    tokens_over=current_count-token_limit
+    final=prompt_func( generator.tokenizer.decode( generator.tokenizer.encode(story)[:,:-tokens_over] )[0] + " ...",sentence, *args) #Ok now we pull exactly the right amount of tokens off
+    final_count = generator.tokenizer.encode(final, return_mask = False).shape[1]
+    if final_count>token_limit:
+      raise Exception("Guessed wrong and too many tokens")
+    #print(generator.tokenizer.encode(final, return_mask = False).shape[1], flush=True)
+    return(final)
+  else:
+    return(prompt_func(story,sentence, *args))
+
+
+
+```
+
+<!--
+https://huggingface.co/stabilityai/StableBeluga2
+Stable Beluga 2 should be used with this prompt format:
+
+### System:
+This is a system prompt, please behave and help the user.
+
+### User:
+Your prompt here
+
+### Assistant:
+The output of Stable Beluga 2
+-->
+
+```{python}
+
+import pandas as pd
+import re
+
+
+#https://github.com/turboderp/exllama/blob/master/example_basic.py
+#!pip install flash-attn --no-build-isolation
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:64"
+
+import os
+os.getcwd()
+import sys
+sys.path.insert(0, "/home/skynet3/Downloads/exllama/")
+from model import ExLlama, ExLlamaCache, ExLlamaConfig
+
+from tokenizer import ExLlamaTokenizer
+from generator import ExLlamaGenerator
+import os, glob
+import torch
+
+def icbe_llm_generator():
+
+  #You are a natural language processing pipeline. You extract entities from text. Parse the text carefully and return every single person, place, and thing mentioned in the text.
+  
+  #I'm processing prompts at about 41 tokens a second and producing responses at about 14 tokens a second
+  #/home/skynet3/Downloads/exllama
+  #python test_benchmark_inference.py -d <path_to_model_files> -p -ppl
+  #python example_chatbot.py -d "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/" -un "Jeff" -p prompt_chatbort.txt
+  #python webui/app.py -d "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/"
+  
+  #python webui/app.py -d "/home/skynet3/Downloads/LLAMA/StableBeluga2-GPTQ/" -gs 17.2,24
+  #python webui/app.py -d "/home/skynet3/Downloads/LLAMA/airoboros-l2-70B-gpt4-1.4.1-GPTQ/" -gs 17.2,24 -length 4096
+  
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/airoboros-l2-70B-gpt4-1.4.1-GPTQ/"
+  model_directory =  "/home/skynet3/Downloads/LLAMA/Platypus2-70B-Instruct-GPTQ/" #https://huggingface.co/TheBloke/Platypus2-70B-Instruct-GPTQ
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/StableBeluga2-GPTQ-4ibt-32g/"
+
+
+  # Directory containing model, tokenizer, generator
+  
+  #model_directory =  "/mnt/str/models/llama-13b-4bit-128g/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/Llama-2-13B-chat-GPTQ/"
+  #model_directory =  "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/LLaMA-30b-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/guanaco-33B-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/falcon-40b-instruct-3bit-GPTQ/"
+  
+  # Locate files we need within that directory
+  
+  tokenizer_path = os.path.join(model_directory, "tokenizer.model")
+  model_config_path = os.path.join(model_directory, "config.json")
+  st_pattern = os.path.join(model_directory, "*.safetensors")
+  model_path = glob.glob(st_pattern)[0]
+  
+  # Create config, model, tokenizer and generator
+  
+  config = ExLlamaConfig(model_config_path)               # create config from config.json
+  config.model_path = model_path                          # supply path to model weights file
+  
+  #Rex's special additions
+  config.set_auto_map("17.2,24") #This did make it allocate to both #https://huggingface.co/TheBloke/guanaco-65B-GPTQ/discussions/21
+  #config.set_auto_map("16.2,24") #"15.5. 24 is what I use.""  https://github.com/turboderp/exllama/issues/191
+  #config.max_input_len = 4096 #4096 
+  config.max_seq_len   = 4096 #I don't understand the difference between these two.
+  config.flash_attn = 4096 #experimenting to see if this works #this one is wire to input length.
+  
+  model = ExLlama(config)                                 # create ExLlama instance and load the weights
+  tokenizer = ExLlamaTokenizer(tokenizer_path)            # create tokenizer from tokenizer model file
+  
+  tokenizer.encode('#') #396
+  tokenizer.eos_token
+  tokenizer.eos_token_id
+  tokenizer.encode(tokenizer.eos_token)
+  
+  cache = ExLlamaCache(model)                             # create cache for inference
+  
+  # monkey patch generator simple to have a custom stop token
+  def generate_simple_rex(self, prompt, max_new_tokens = 128, custom_stop=None):
+      self.end_beam_search()
+      ids, mask = self.tokenizer.encode(prompt, return_mask = True)
+      self.gen_begin(ids, mask = mask)
+      max_new_tokens = min(max_new_tokens, self.model.config.max_seq_len - ids.shape[1])
+      eos = torch.zeros((ids.shape[0],), dtype = torch.bool)
+      for i in range(max_new_tokens):
+        token =  generator.gen_single_token(mask = mask)
+        token_as_string =  generator.tokenizer.decode( token )[0]
+        #print(token_as_string)
+        if custom_stop in token_as_string:
+          #print("breaking!")
+          generator.sequence=generator.sequence[0,:-1] #strip off that last token
+          break
+        for j in range(token.shape[0]):
+          if token[j, 0].item() ==  generator.tokenizer.eos_token_id: eos[j] = True
+        if eos.all(): break
+      text = self.tokenizer.decode(self.sequence[0] if self.sequence.shape[0] == 1 else self.sequence)
+      return text
+    
+  ExLlamaGenerator.generate_simple_rex = generate_simple_rex #monkey patch in our change
+  generator = ExLlamaGenerator(model, tokenizer, cache)   # create generator
+  
+  #generator.end_beam_search()
+  #ids, mask = generator.tokenizer.encode("USER: Print 5 pounds signs, e.g. '#####' ASSISTANT:", return_mask = True)
+  #generator.gen_begin(ids, mask)
+  #token_as_string=tokenizer.decode(generator.gen_single_token(mask = mask))
+  #'#####' #is a token. Hilarious.
+  
+  tokenizer.eos_token_id
+  tokenizer.encode('a')
+  tokenizer.decode(torch.tensor([[2]]))
+  # Configure generator
+  
+  generator.disallow_tokens([tokenizer.eos_token_id])
+  
+  #Here is my attempt to make it as deterministic as possible.
+  #0 temperature throws an error. top_k=1 supposedly ignores everything else and is perfectly deterministic.
+  generator.settings.token_repetition_penalty_max = 1.0 #ok if you lower this to 0 it just repeats over and over again
+  #big picture if you threshold with top_k =1 you can let tthe temp up a bit and p down and get the same result at much much faster perf.
+  generator.settings.temperature = 0.1 #0.01 #0.95
+  generator.settings.top_p = 0.9 #0.99 #https://github.com/turboderp/exllama/issues/81
+  generator.settings.top_k = 1 #1 #https://github.com/turboderp/exllama/issues/81
+  generator.settings.typical = 1.0 #https://github.com/turboderp/exllama/issues/81
+  
+  return(generator)
+
+
+
+
+# Produce a simple generation
+
+#prompt = "Once upon a time,"
+#print (prompt, end = "")
+#output = generator.generate_simple(prompt, max_new_tokens = 100)
+#print(output[len(prompt):])
+#[output]
+#generator.generate_simple_rex("USER: Print 5 pounds signs, e.g. '#####' ASSISTANT:", max_new_tokens = 10, custom_stop="#" ) #
+
+```
+
+# Initialize (only do once or OOM)
+
+```{python}
+import numpy as np
+generator=icbe_llm_generator()
+
+#452 seconds on average for 3090+4080.
+benchmark=False
+from datetime import datetime
+times=[]
+if benchmark:
+  for i in range(5):
+    #generator.gen_begin('') #resets the cache don't have it working apparently #https://github.com/turboderp/exllama/discussions/155
+    start_time = datetime.now()
+    output_benchmark =  generator.generate_simple("### User: List the first 1000 things that come to mind.\n### ASSISTANT:", max_new_tokens = 4000  ) 
+    end_time = datetime.now()
+    times.append(end_time-start_time)
+
+#pip install pyread
+import pyreadr
+crisis_narratives = pyreadr.read_r("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.Rds").popitem()[1]
+print(crisis_narratives.keys())
+
+#Load the story once for the whole thing
+story=crisis_narratives.text[crisno-1] #remember 0 indexing
+
+```
+
+# Scrape Crises from Website
+
+```{r}
+
+if(!file.exists("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.Rds")){
+  df <- data.frame(crisno=1:496)
+  df$html <- NA
+  df$text <- NA
+  dim(df)
+  #http://www.icb.umd.edu/updates/v15/dataviewer/ajax/crisis_summary.asp?id=1&q=undefined
+  for(i in 1:496){
+    url <- paste0("http://www.icb.umd.edu/updates/v15/dataviewer/ajax/crisis_summary.asp?id=",i,"&q=undefined")
+    library(rvest)     
+    page=read_html(url)
+    text <- page %>% html_text2()
+    df$text[i] <- text
+  
+  }
+  
+  library(tidyverse)
+  df %>% saveRDS(file="/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.Rds")
+  #library(arrow) ; #install.packages('arrow')
+  #df %>% write_tsv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.tsv")
+}
+```
+
+# step01_chunk_type Chunk the Story
+
+This file iterates over full narratives and 
+1) codes each chunk as a fragment, sentence, or sentences
+2) tries to split the chunk no matter what into a numbered list of sentences
+You then go back to the downloads folder and clean and create a final sentence list.
+
+```{python}
+
+fileout="/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step00_chunk/crisis_"+str(crisno)+".csv"
+
+if os.path.exists(fileout):
+  chunks = re.split("[\r\n]+",story)
+  chunks=[q.strip() for q in chunks if len(q.strip())>0]
+  
+  df = pd.DataFrame({
+    'crisno':crisno,
+    'story':story,
+    'chunk':chunks
+  })
+  
+  df.to_csv(fileout, index=False)
+
+```
+
+# Classify Each Chunk
+
+<!--
+https://huggingface.co/stabilityai/StableBeluga2
+Stable Beluga 2 should be used with this prompt format:
+
+### System:
+This is a system prompt, please behave and help the user.
+
+### User:
+Your prompt here
+
+### Assistant:
+The output of Stable Beluga 2
+-->
+
+```{python}
+
+variable="chunk_type"
+df_chunks = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step00_chunk/crisis_"+str(crisno)+".csv")
+df_chunks['variable']=variable
+df_chunks['output_thoughts']=''
+df_chunks['output_answer']=''
+df_chunks['prompt1']=''
+df_chunks['prompt2']=''
+
+for i, chunk in enumerate(df_chunks.chunk):
+  print(chunk, flush=True)
+  #prompt1=assemble_prompt(variable, sentence=chunk, previous_debate=None, story=None) #Oh wow. When you pass it a broken first sentence it just halucinates a totally different story. Lol
+  #output1 =  generator.generate_simple_rex(prompt1, max_new_tokens = 150 , custom_stop= '#'  ) #
+  #output_debate = output1.replace(prompt1, "").strip().split("\n")[0]
+  prompt1="""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+### Begin Question
+Which of these best describes this quoted text: "%s"
+A) a section heading / title
+B) 1 complete sentence
+C) 2 or more complete sentences?
+### End Question
+
+### Begin Thought Process
+""" % (chunk) 
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = 300 , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice and then stop)\n""" 
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df_chunks.loc[i, 'output_thoughts']=output_thoughts
+  df_chunks.loc[i, 'output_answer']=output_answer
+  df_chunks.loc[i, 'prompt1']=prompt1
+  df_chunks.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df_chunks.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step01_chunk_type/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+# Split Chunks into Sentences
+
+We're going to go ahead and split all of them and then selectively choose based on the above later.
+
+```{python}
+
+variable="chunk_sentences"
+df_chunks = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step01_chunk_type/crisis_"+str(crisno)+".csv")
+df_chunks['variable']=variable
+df_chunks['output_thoughts']=''
+df_chunks['output_answer']=''
+df_chunks['prompt1']=''
+df_chunks['prompt2']=''
+
+for i, chunk in enumerate(df_chunks.chunk):
+  print(chunk, flush=True)
+
+  prompt1="""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+### Begin Text
+"%s"
+### End Text
+
+Split the above text into a numbered list of individual sentences.
+
+### Final Answer (a numbered list of split sentences)
+""" % (chunk) 
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = np.floor((len(chunk)/4) + 100 ).astype('int') , custom_stop= '@'  ) #can't use pounds, some of the sentences have them
+  output_answer = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  df_chunks.loc[i, 'output_answer']=output_answer
+  df_chunks.loc[i, 'prompt1']=prompt1
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df_chunks.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step02_chunk_sentences/crisis_"+str(crisno)+".csv", index=False)
+
+```    
+
+
+# step03_sentences 03 Clean Up Sentence Chunks 
+
+```{r}
+library(tidyverse)
+step01_chunk_type <- read_csv(paste0("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step01_chunk_type/crisis_",crisno,".csv"))
+step02_chunk_sentences <- read_csv(paste0("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step02_chunk_sentences/crisis_",crisno,".csv"))
+
+step01_chunk_type %>% dplyr::select(crisno, chunk_type=output_answer) %>%   mutate(chunk_number=row_number()) %>%
+  left_join(
+    step02_chunk_sentences %>% 
+      mutate(chunk_number=row_number()) %>% 
+      mutate(sentences_raw = strsplit(as.character(output_answer), "\n")) %>%  #[1-9]\\. 
+      unnest(sentences_raw) %>%
+      mutate(sentences_clean= sentences_raw %>% str_replace("^[0-9]*\\.*",'') %>% trimws()) %>%
+
+      mutate(ends_in_comma = sentences_clean %>% str_detect(",$")) %>%
+      mutate(lower_case = sentences_clean %>% str_detect("^[a-z]")) %>%
+      mutate(lower_case_cumsum = cumsum(!lower_case) ) %>%        
+      group_by(chunk_number, chunk, lower_case_cumsum) %>%
+      summarise(sentences_clean = sentences_clean %>% paste0(collapse=" ")) %>% #This repairs sentences oversplit, next line starts with a lower case letter gets pulled up
+            
+      group_by(chunk_number) %>%
+        mutate(chunk_sentence_number=row_number()) %>%
+      ungroup() 
+  ) %>%
+  #Before we commit to numbering them, check for some bad cases
+  mutate(sentences_final = ifelse(chunk_type %>% trimws() %>% str_detect("^A|^B") & chunk_sentence_number==1, chunk, NA))  %>% 
+  mutate(sentences_final = ifelse(chunk_type %>% trimws() %>% str_detect("^C"), sentences_clean, sentences_final) )  %>%
+  mutate(sentences_final= sentences_final %>% trimws()) %>% 
+  filter(!is.na(sentences_final) & sentences_final!='') %>%
+  mutate(sentence_number= row_number()) %>% 
+  dplyr::select(crisno, chunk, sentence_number, sentence=sentences_final) %>%
+  write_csv(paste0("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step03_sentences/crisis_",crisno,".csv"),na="")
+
+```
+
+
+
+# step04_complete_sentence
+
+Treat this as an initial screen. The first screen rules out sentence fragments. This rules out things that are clearly background. Next pass is going to try to get into more detailed counting.
+
+```{python}
+
+variable="complete_sentence"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step03_sentences/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Start Quoted Text
+"%s"
+### End Quoted Text
+
+### Begin Instructions
+Step 1: Describe what constitutes a complete sentence. Include the facts that it a complete sentence has to have a subject and a verb and it must end in a period.
+Step 2: Determine whether the quoted text has a subject, and if so specifically show what the subject is with the relevant substring.
+Step 3: Determine whether the quoted text has a verb, and if so specifically show what the verb is with the relevant substring.
+Step 4: Determine whether the quoted text ends in a period.
+Step 5: Determine whether the text has any properties indicative of not being a sentence, e.g. sounds like a title or a section heading, sounds like part of the reference section, etc.
+Step 6: Based on the above, is the quoted text a complete sentence? (yes/no)
+### End Instructions
+
+### Begin Debate
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# step05_contains_event_round_3
+
+
+```{python}
+
+variable="contains_event"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if df['complete_sentence'][i].startswith("N"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Begin Codebook
+A) Background - Potentially useful context, but no codable actions from the crisis. Could refer to something before, during, or after the crisis.
+B) No Action - No codable action because explicit statement of inaction. Actors refrained from doing something.
+C) Error - Some sentence fragments are completely unintelligible, e.g. section headings. Code these as an error.
+D) 1 - A single event. A single action. A single speech act, potentially about an action. A single thought, potentially about an act or speech.
+E) 2 - Two distinct events
+F) 3 - Three distinct events
+### End Codebook
+
+### Begin Coding Instructions
+Background:
+Provides context about a situation, the relationship between countries, or the history of an event, but doesn't describe a specific action taken during the crisis.
+Descriptions of oscillating relations, opinion dynamics, roles played by countries or entities, historical sequences without specifying particular actions.
+Sentences that give contextual or chronological sequences without direct actions or decisions.
+No Action:
+Explicit statements of inaction or non-involvement by actors.
+Mention of a state or situation remaining unchanged.
+Descriptions of what was not done, who wasn't involved, or the continuation of a status quo.
+1:
+Describes a singular event, action, response, decision, thought, or speech act.
+Highlights only one key event, even if it's described in some detail.
+Actions by a single entity without reference to a second distinct event.
+2:
+Mentions two distinct actions, decisions, or events either by the same actor or different actors.
+Two significant events highlighted in sequence or contrast.
+3:
+Mentions three distinct actions, events, or decisions either by the same actor or different actors.
+A complex sequence of events, actions, or decisions that involve multiple entities.
+Error:
+Sentence fragments that lack full context or are not complete in meaning.
+Headings or transitional phrases.
+Sentences that appear to introduce or conclude larger sections without providing a distinct event or action.
+Incomplete information or sentences that seem like they are part of a larger context.
+Observations:
+The "Background" code seems to lean heavily on historical, contextual, and relationship-oriented information that provides a setting for the crisis but doesn't delve into specific actions or decisions during the crisis.
+The "No Action" code captures moments where explicit inaction is described or where the status quo remains unchanged.
+Codes "1", "2", and "3" seem straightforward in counting the distinct actions or events in the sentence. However, it's important to differentiate between actions and context. For instance, background information leading up to an action still counts as one action.
+The "Error" code is reserved for fragmented information, incomplete sentences, or transitional phrases that don't provide meaningful details about the crisis.
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step05_contains_event/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+# step05_contains_event_round_2
+
+This is now my prefered one, turning off the next two
+
+Here's how I developed this prompt. Use GPT4 starting first with "Write coding rules that would teach an LLM how to correctly code new sentences like these existing examples. Concentrate on rules that separate the two classes in general rather than any specific example. What are rules that would always help choose the right answer, no matter the sentence?" and then 40 examples, 20 no event, 20 yes event. Then fed it "Here are 40 more sentences, update the rules with new things you learned or that didn't apply as well as you thought they would." and iterated for the first 320 sentences until the instructions started to converge (as judged by eye).
+
+
+```{python}
+
+variable="contains_event"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if df['complete_sentence'][i].startswith("N"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Begin Answer Options
+no event
+event
+### End Answer Options
+
+### Begin Coding Instructions
+Rule 1: Verb Tense and Action Words
+Event: Sentences that describe actions, occurrences, or incidents in the past, present, or future.
+No Event: Sentences that don't describe actions, occurrences, or incidents.
+
+Rule 2: Active vs. Passive Voice
+Event: Sentences using active voice that clearly indicate an action or event taking place.
+No Event: Sentences using passive voice that focus on subjects without explicitly indicating actions or events.
+
+Rule 3: Direct Statements vs. Descriptions
+Event: Sentences that provide direct information about specific actions or events.
+No Event: Sentences that provide general descriptions, background information, or explanations without directly describing actions or events.
+
+Rule 4: Specific vs. General Information
+Event: Sentences that contain specific details about a particular action or event.
+No Event: Sentences that provide general or abstract information without focusing on specific actions or events.
+
+Rule 5: Causality and Impact
+Event: Sentences that discuss consequences, impacts, or reactions resulting from actions or events.
+No Event: Sentences that discuss abstract concepts, states, or conditions without clear causal relationships.
+
+Rule 6: Time Markers and Temporal References
+Event: Sentences that include time markers, temporal references, or time-related adverbs (e.g., "on," "in," "after," "before," "next").
+No Event: Sentences that lack specific time markers and discuss more general concepts.
+
+Rule 7: Action Verbs vs. State Verbs
+Event: Sentences with action verbs (e.g., "triggered," "attacked," "demanded") that indicate events or actions.
+No Event: Sentences with state verbs (e.g., "was," "were," "had") that describe static conditions rather than actions.
+
+Rule 8: Cause and Effect
+Event: Sentences that clearly indicate a cause-and-effect relationship between actions or events.
+No Event: Sentences that discuss ideas, concepts, or conditions without clear causal relationships.
+
+Rule 9: Conflict, Resolution, and Change
+Event: Sentences involving conflicts, resolutions, changes, or transformations.
+No Event: Sentences providing general information, context, or background without involving significant changes or conflicts.
+
+Rule 10: Direct vs. Indirect References
+Event: Sentences with direct references to specific actions, incidents, or events.
+No Event: Sentences with indirect references or discussions of ideas, concepts, or conditions.
+
+Rule 11: Agent and Actor Identification
+Event: Sentences clearly identifying agents or actors involved in actions or events.
+No Event: Sentences discussing topics or concepts without specifying agents or actors engaging in actions.
+
+Rule 12: Contextual Clues
+Event: Sentences with contextual clues such as active verbs, action-related nouns, and events that progress over time.
+No Event: Sentences with contextual clues indicating general information, descriptions, or static conditions.
+
+Rule 13: Specific Event Indicators
+Event: Sentences containing specific event indicators, such as words related to conflicts, resolutions, military actions, declarations, and negotiations.
+No Event: Sentences lacking event indicators and focusing on general concepts, relationships, or background information.
+
+Rule 14: Resolution and Negotiation
+Event: Sentences involving resolutions, negotiations, ultimatums, agreements, or efforts to address conflicts.
+No Event: Sentences discussing general territorial claims, historical background, or passive responses without negotiation efforts.
+### End Coding Instructions
+
+### Apply the above information step by step to reach a final conclusion for the following sentence:
+%s
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step05_contains_event/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+
+# step05_contains_event
+
+This is indedeterminant. Running the same code twice generates two different answers.
+
+Turned off in favor of the above
+
+```{python, eval=F}
+
+variable="contains_event"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_complete_sentence/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['complete_sentence']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  if df['complete_sentence'][i].startswith("N"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Start Quoted Text
+"%s"
+### End Quoted Text
+
+### Begin Instructions
+Step 1: Describe what constitutes a sentence that describes an event versus a setence that provides background or vague detail for understanding the context of events. Include that an event must have a clear actor and a clear action, e.g. a physical activity, a communication, or an act of mental growth or experience.
+Step 2: Determine whether the quoted text has a clear actor, and if so specifically show what the actor is with the relevant substring.
+Step 3: Determine whether the quoted text has an action, and if so specifically show what the action is with the relevant substring.
+Step 4: Determine whether the quoted text has any properties indicative of being background context, e.g. sounds like it's about the details of an actor or relationship, sounds like it's about recent history or long periods of time, sounds like it describes a crisis as a whole and not an event that took place within it.
+Step 5: Based on the above, is the quoted text about a specific event? (yes/no)
+### End Instructions
+
+### Begin Debate
+""" % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step05_contains_event/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# step06_contains_event_retrospection
+
+Turned off in favor of the above
+
+```{python, eval=F}
+
+variable="contains_event_retrospection"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step05_contains_event/crisis_"+str(crisno)+".csv" ).fillna('') #make sure we import with '' for na
+df['contains_event']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+debug= [
+"The crisis continued at a lower level of intensity for several more weeks due to Cuban President Castro's demands concerning a U.S. pledge not to invade his country.",
+"Involved were members of the Warsaw Pact, whose forces were put on alert, and Latin American states which offered military assistance to the U.S.",
+"Overall, U Thant's mediation effort was a significant factor in easing tensions between crisis actors which contributed to a more rapid termination of the crisis.", 
+"He also used formulative mediation by highlighting common interests and making substantive suggestions to both sides for diffusing the crisis.", 
+"The acting Secretary-General managed to act as a facilitator and kept lines of communication open by contacting both parties.",
+"U Thant's mediation efforts had an important impact on crisis resolution."]
+
+for i, sentence in enumerate(df.sentence): #
+  if not df['contains_event'][i].startswith("Y"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+
+### Start Story
+"%s"
+### End Story
+
+### Start Quoted Text
+"%s"
+### End Quoted Text
+
+### Begin Instructions
+Step 1: List the differences between describing a specific event and summarizing / reviewing / evaluating. 
+Step 2: Determine whether the quoted text has a specific event, and if so show exactly what event with the relevant substring.
+Step 3: Determine whether the quoted text has any properties indicative of being a summary, review or evaluation, e.g. sounds like evaluating the performance of actors during the crisis, coming at the end of a story to wrap up, evaluating the course of or involvement in the crisis as a whole.
+Step 5: Based on the above, is the quoted text about a specific event? (yes/no)
+### End Instructions
+
+### Begin Debate
+""" % (story, sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step06_contains_event_retrospection/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# Thought vs no Thought
+
+```{python}
+
+variable="has_thought"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step05_contains_event/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['contains_event']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing
+  if not df['contains_event_retrospection'][i].startswith("Y"):
+    continue
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=200
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are an autoregressive large language model that does exactly as instructed and nothing else. You end every response with an at sign (@). You are an LLM so your only chance to reason is to talk out loud step by step and slowly accumulate evidence building toward a conclusion.
+
+### User:
+
+Step 1: Carefully read this list of possible mental experiences.
+A) experienced the start of a crisis
+B) experienced the end of a crisis
+C) held a desire
+D) held a fear
+E) held a perception of victory
+F) held a perception of defeat
+G) held territorial aims
+H) held policy aims
+I) held regime change aims
+J) held preemption aims
+K) discovered or learned a fact
+L) became convinced or persuaded of a fact
+M) None of the above
+
+Step 2: Review these example sentences and internalize the coding rules for the above categories {Example Sentence, Correct Answer}. 
+
+{"A crisis for Syria was triggered on 12 February 1951, the day Israel's Palestine Land Development Company of land for agriculture, and use the accumulated water to irrigate other parts of Israel.", A}
+{"On 12 February 1951, Israel's Palestine Land Development Company of land for agriculture, and use the accumulated water to irrigate other parts of Israel.", M}
+{"The crisis over Kashmir ended for both India and Pakistan with a UN-mediated cease-fire on 1 January 1949.", B}
+{"There was a UN-mediated cease-fire on 1 January 1949.", M}
+{"Mussolini met with Hitler on 19 July in the hope of obtaining Hitler's consent to Italy's early withdrawal from the war; no concessions were granted.", C}
+{"Mussolini met with Hitler on 19 July and asked for Hitler's consent to Italy's early withdrawal from the war; no concessions were granted.", M}
+{"Yet for the Soviet Union, as for the U.S. in the Americas, unrest anywhere in Eastern Europe was perceived as a risk to Moscow's hegemony., D}
+{"Unrest anywhere in Eastern Europe was a risk to Moscow's hegemony.", M}
+{"Malaya, too, perceived a victory because Indonesia's confrontation policy ended without destroying the Federation.", E}
+{"Indonesia's confrontation policy ended without destroying the Federation.", M}
+{"The proclamation of the People's Republic of China on the island of Taiwan, thereby tacitly acknowledging the PRC as ruler of mainland China.", F}
+{"The proclamation of the People's Republic of China on the island of Taiwan.", M}
+{"Neither side was content with this arrangement: each aimed at reunification, with the PRC advocating a Communist regime while Chiang Kai-shek wished to see the Mao Tse-tung-led government removed from the mainland.", G}
+{"Neither side was content with this arrangement.", M}
+{"Libya's leader tried to offset the hostile reception by redefining the goal the following day as "full unity, rather than a merger.", H}
+{"Libya's leader tried to offset the hostile reception.", M}
+{"The report also stated that the invasion was aimed at the overthrow of Sekou Touré.", I}
+{"The report also stated that the was invasion.", M}
+{"Zambia, anticipating Rhodesian retaliation, appealed to the U.K. to restrain Rhodesia.", J}
+{"Zambia, appealed to the U.K. to restrain Rhodesia.", M}
+{"The CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.", K}
+{"There was a presence of Soviet missiles in Cuba.", M}
+{"At that point Pakistani officers realized that the Azad Kashmir forces could not hold the Indian army.", L}
+{"The Azad Kashmir forces could not hold the Indian army.", M}
+
+Step 3: Carefully read these coding guidelines that differentiate between sentences that match a particular answer choice versus those that match the "M) None of the above" category:
+Explicit Mention of Experience or Perception: If the sentence explicitly mentions a subject (person, country, group, etc.) experiencing or perceiving an event, then it will likely match one of the categories A-L.
+Explicit Mention of Desire, Fear, or Aim: If the sentence explicitly describes a subject holding a desire, fear, or aim, then it should match the respective category.
+Absence of a Subject's Perspective or Perception: If the sentence presents an event or fact without attributing it to a subject's experience, perception, desire, or aim, then it will likely match "M) None of the above."
+Explicit Mention of Discovery or Persuasion: If a sentence mentions that a subject discovered, learned, or became convinced of something, then it should match categories K or L respectively.
+Indirect Implications: If the sentence implies a subject's experience, perception, desire, fear, or aim without directly stating it, one should consider the context and underlying meaning to determine if it matches any category other than M.
+Neutrality: Sentences that neutrally state facts or events without tying them to a subject's mental state or aim are likely to fall under the "M) None of the above" category.
+Presence of Conclusive Statements: If a sentence makes a conclusive statement about a subject's mental state or aim without providing context or describing an experience, it's more likely to match "M) None of the above."
+In summary, to determine whether a sentence matches one of the categories A-L or the "None of the above" category, one must discern whether the sentence describes an event from a subject's perspective, delves into a subject's mental state, or merely states an event or fact neutrally.
+
+Step 4: Apply the coding rules above to the following new sentence.
+"%s"
+", """ % (sentence)
+    ) #{"
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single letter answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step07_thought_type/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# step07_thought_type
+
+There are common themes that differentiate a sentence that will match an answer choice a sentence that matches only M none of the above. List several coding rules that would allow a coder to quickly tell whether a sentence would be a match. Do not focus on any choice in particular, give rules that apply to all choices.
+
+
+```{python}
+
+variable="thought_type"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step06_contains_event_retrospection/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['contains_event_retrospection']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing
+  if not df['contains_event_retrospection'][i].startswith("Y"):
+    continue
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=200
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are an autoregressive large language model that does exactly as instructed and nothing else. You end every response with an at sign (@). You are an LLM so your only chance to reason is to talk out loud step by step and slowly accumulate evidence building toward a conclusion.
+
+### User:
+
+Step 1: Carefully read this list of possible mental experiences.
+A) experienced the start of a crisis
+B) experienced the end of a crisis
+C) held a desire
+D) held a fear
+E) held a perception of victory
+F) held a perception of defeat
+G) held territorial aims
+H) held policy aims
+I) held regime change aims
+J) held preemption aims
+K) discovered or learned a fact
+L) became convinced or persuaded of a fact
+M) None of the above
+
+Step 2: Review these example sentences and internalize the coding rules for the above categories {Example Sentence, Correct Answer}. 
+
+{"A crisis for Syria was triggered on 12 February 1951, the day Israel's Palestine Land Development Company of land for agriculture, and use the accumulated water to irrigate other parts of Israel.", A}
+{"On 12 February 1951, Israel's Palestine Land Development Company of land for agriculture, and use the accumulated water to irrigate other parts of Israel.", M}
+{"The crisis over Kashmir ended for both India and Pakistan with a UN-mediated cease-fire on 1 January 1949.", B}
+{"There was a UN-mediated cease-fire on 1 January 1949.", M}
+{"Mussolini met with Hitler on 19 July in the hope of obtaining Hitler's consent to Italy's early withdrawal from the war; no concessions were granted.", C}
+{"Mussolini met with Hitler on 19 July and asked for Hitler's consent to Italy's early withdrawal from the war; no concessions were granted.", M}
+{"Yet for the Soviet Union, as for the U.S. in the Americas, unrest anywhere in Eastern Europe was perceived as a risk to Moscow's hegemony., D}
+{"Unrest anywhere in Eastern Europe was a risk to Moscow's hegemony.", M}
+{"Malaya, too, perceived a victory because Indonesia's confrontation policy ended without destroying the Federation.", E}
+{"Indonesia's confrontation policy ended without destroying the Federation.", M}
+{"The proclamation of the People's Republic of China on the island of Taiwan, thereby tacitly acknowledging the PRC as ruler of mainland China.", F}
+{"The proclamation of the People's Republic of China on the island of Taiwan.", M}
+{"Neither side was content with this arrangement: each aimed at reunification, with the PRC advocating a Communist regime while Chiang Kai-shek wished to see the Mao Tse-tung-led government removed from the mainland.", G}
+{"Neither side was content with this arrangement.", M}
+{"Libya's leader tried to offset the hostile reception by redefining the goal the following day as "full unity, rather than a merger.", H}
+{"Libya's leader tried to offset the hostile reception.", M}
+{"The report also stated that the invasion was aimed at the overthrow of Sekou Touré.", I}
+{"The report also stated that the was invasion.", M}
+{"Zambia, anticipating Rhodesian retaliation, appealed to the U.K. to restrain Rhodesia.", J}
+{"Zambia, appealed to the U.K. to restrain Rhodesia.", M}
+{"The CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.", K}
+{"There was a presence of Soviet missiles in Cuba.", M}
+{"At that point Pakistani officers realized that the Azad Kashmir forces could not hold the Indian army.", L}
+{"The Azad Kashmir forces could not hold the Indian army.", M}
+
+Step 3: Carefully read these coding guidelines that differentiate between sentences that match a particular answer choice versus those that match the "M) None of the above" category:
+Explicit Mention of Experience or Perception: If the sentence explicitly mentions a subject (person, country, group, etc.) experiencing or perceiving an event, then it will likely match one of the categories A-L.
+Explicit Mention of Desire, Fear, or Aim: If the sentence explicitly describes a subject holding a desire, fear, or aim, then it should match the respective category.
+Absence of a Subject's Perspective or Perception: If the sentence presents an event or fact without attributing it to a subject's experience, perception, desire, or aim, then it will likely match "M) None of the above."
+Explicit Mention of Discovery or Persuasion: If a sentence mentions that a subject discovered, learned, or became convinced of something, then it should match categories K or L respectively.
+Indirect Implications: If the sentence implies a subject's experience, perception, desire, fear, or aim without directly stating it, one should consider the context and underlying meaning to determine if it matches any category other than M.
+Neutrality: Sentences that neutrally state facts or events without tying them to a subject's mental state or aim are likely to fall under the "M) None of the above" category.
+Presence of Conclusive Statements: If a sentence makes a conclusive statement about a subject's mental state or aim without providing context or describing an experience, it's more likely to match "M) None of the above."
+In summary, to determine whether a sentence matches one of the categories A-L or the "None of the above" category, one must discern whether the sentence describes an event from a subject's perspective, delves into a subject's mental state, or merely states an event or fact neutrally.
+
+Step 4: Apply the coding rules above to the following new sentence.
+"%s"
+", """ % (sentence)
+    ) #{"
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single letter answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step07_thought_type/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+# step08_speech_type
+
+Step 3: There are common themes that differentiate a sentence that will match an answer choice a sentence that matches only N none of the above. List several coding rules that would allow a coder to quickly tell whether a sentence would be a match. Do not focus on any choice in particular, give rules that apply to all choices.
+
+```{python}
+
+variable="speech_type"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step06_contains_event_retrospection/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['contains_event_retrospection']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing
+  if not df['contains_event_retrospection'][i].startswith("Y"):
+    continue
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=200
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are an autoregressive large language model that does exactly as instructed and nothing else. You end every response with an at sign (@). You are an LLM so your only chance to reason is to talk out loud step by step and slowly accumulate evidence building toward a conclusion.
+
+### User:
+
+Step 1: Carefully read this list of possible communication acts.
+A) an ultimatum
+B) an offer with conditions
+C) an offer without conditions
+D) an expression of intent
+E) an expression of threat 
+F) an expression of promise 
+G) an expression of demand
+H) an expression of appeal / request
+I) an expression of accusation
+J) an expression of rejection / denial
+K) an expression of acceptance
+L) an expression of disapproval / condemnation
+M) an expression of praise
+N) none of the above
+
+Step 2: Review these example sentences and internalize the coding rules for the above categories {Example Sentence, Correct Answer}. 
+{"In this session, Kosygin persuaded Pakistan to pull back its forces by threatening to aid India unless they did so.", A}
+{"In this session, Kosygin persuaded Pakistan to pull back its forces.", N}
+{"That day another Khrushchev letter was received in Washington offering the removal of Soviet missiles from Cuba in exchange for the removal of U.S. missiles from Turkey.", B}
+{"That day another Khrushchev letter was received in Washington.", N}
+{"Germany approached the Soviet Union on China's behalf in August and offered its good offices to settle the dispute.", C}
+{"Germany approached the Soviet Union on China's behalf in August.", N}
+{"The U.K. announcement on 21 February 1947 of its intention to discontinue aid to Greece and Turkey by 31 March triggered a crisis for the U.S., Greece, and Turkey.", D}
+{"The U.K. announcement on 21 February 1947 triggered a crisis for the U.S., Greece, and Turkey.", N}
+{"However, a message from Stalin was construed as containing an implied threat of Soviet military action if Finland did not comply with Moscow's proposal.", E}
+{"However, a message from Stalin was construed.", N}
+{"The Dutch response, on 3 December, was a statement by the prime minister pledging the safeguarding of Dutch national interests in Indonesia.", F}
+{"The Dutch response, on 3 December, was a statement by the prime minister.", N}
+{"On 4 and 6 September, the UN Security Council called for a cease-fire and the withdrawal of armed forces.", G}
+{"On 4 and 6 September, the UN Security Council held a meeting.", N}
+{"Its major response, on 21 February, was to request aid from the U.S.", H}
+{"Its major response, on 21 February, was to reach out to the U.S.", N}
+{"Syria contended that Israel's project violated their 1949 Armistice Agreement, under which the DMZ was a no-man's land.", I}
+{"Syria wondered whether Israel's project violated their 1949 Armistice Agreement, under which the DMZ was a no-man's land.", N}
+{"Increased U.S. and British naval activity in the region preceded Turkey's total rejection of Soviet demands, which was contained in a Note to Moscow on 18 October.", J}
+{"Increased U.S. and British naval activity in the region preceded Turkey's response, which was contained in a Note to Moscow on 18 October.", N}
+{"Czechoslovakia formally announced its acceptance of the invitation on the 7th.", K}
+{"Czechoslovakia formally announced its decision on the invitation on the 7th.", N}
+{"That day Cuba responded by condemning the U.S. blockade and declaring its willingness to fight.", L}
+{"That day Cuba responded by increasing its willingness to fight.", N}
+{"On 9 October the United States sent a Note to the Soviet Union reaffirming its support for Turkey.", M}
+{"On 9 October the United States sent a Note to the Soviet Union about Turkey.", N}
+
+
+Step 3: Carefully read these coding guidelines that differentiate between sentences that match a particular answer choice versus those that match the "N) None of the above" category:
+Explicit Action or Statement Rule: Sentences that explicitly depict a direct action or a clear communication act are likely to match one of the choices (A-M). Conversely, if the sentence is merely informative or descriptive without a specific action or statement, it likely falls under "N."
+Presence of Conditional Elements: If the sentence contains a conditional clause (like "unless", "if", "in exchange for"), it is likely to match certain choices like an ultimatum, an offer with conditions, etc.
+Emotive or Evaluative Language: Sentences that contain emotive or evaluative language, suggesting judgment, praise, condemnation, or any strong sentiment, are likely to match specific communication acts such as threats, promises, approval, or disapproval.
+Direct Expression Rule: If a sentence contains direct verbs that match the communication acts, like "demand", "offer", "reject", "accept", "request", etc., it likely matches one of the choices (A-M).
+Absence of Ambiguity: If the sentence is clear and explicit in its message, it's more likely to match one of the choices (A-M). Ambiguous or vague sentences, or those that lack a clear communication act, often match "N."
+Direct Subject-Object Relationship: Sentences where there's a clear subject-object relationship, especially with a direct verb linking them (like "U.K. announcement..."), may match one of the choices (A-M). On the other hand, when this relationship is vague or absent, it may fall under "N."
+Applying these coding rules can help a coder quickly categorize a sentence as fitting one of the specific communication acts or falling under the "none of the above" category.
+
+Step 4: Apply the coding rules above to the following new sentence.
+"%s"
+", """ % (sentence)
+    ) #{"
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single letter answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step08_speech_type/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# step09_action_high_level_category
+
+Ambiguity: If you find that the sentence does not clearly align with any of the categories based on the actions listed in Step 1, it should be coded as "G) None of the Above."
+
+```{python}
+
+variable="action_high_level_category"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step06_contains_event_retrospection/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['contains_event_retrospection']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'On the eve of the Missile crisis Washington did not openly challenge the Soviet statements concerning the defensive character of the weapons being sent to Cuba.',
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing 
+  if not df['contains_event_retrospection'][i].startswith("Y"):
+    continue
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are an autoregressive large language model that does exactly as instructed and nothing else. You end every response with an at sign (@). You are an LLM so your only chance to reason is to talk out loud step by step and slowly accumulate evidence building toward a conclusion.
+
+### User:
+
+Step 1: Carefully read this list of possible actions.
+A) Increased Aggression by Armed Actors (Raise in alert, Mobilization, Fortify, Exercise, Weapons test, Deployment to area, Show of force, Blockade, Border Violation, No Fly Zone, Battle/clash, Attack, Invasion/occupation, Bombard, Declaration of war, Join ongoing war, Continuation of previous fighting, Assert Political Control Over, Annex, Assert Autonomy Against)
+
+B) Reduced Aggression Acts by Armed Actors (Lower alert, De-mobilization, Remove Fortify, End Exercise, End Weapons Test, Withdraw from Area, Withdraw behind border, End blockade, Cease Fire, Retreat, Surrender, Declaration of  peace, Withdraw from War, Switch sides in war, Reduce Control Over, Decolonize)
+
+C) Increased Domestic Aggression by Unarmed Actors (Coup, Assassination, Protest, Strike, Riot, Restrict Rights, Terrorism, Human Rights Violation, Mass Killing)
+
+D) Reduced Domestic Aggression by Unarmed Actors (Leadership change, Institutions change, End Protest, End Strike, End Riot, Provide Rights, Reduce Terrorism, Reduce Human Rights, Violation, Reduce Mass Killing, Evacuate)
+
+E) Increased International Aggression by Unarmed Actors (Break off negotiations, Withdraw diplomats, Violate Terms of Agreement, Political succession, Leave alliance, Terminate treaty, End Economic Cooperation, End Military Cooperation, End Intelligence Cooperation, End Unspecified cooperation, End Economic aid, End Humanitarian aid, End Military aid, End Unspecified aid)
+
+F) Less Aggressive Interactions by Unarmed Actors (Discussion, Meeting, Mediation, Natural Conclusion of Diplomacy, Sign Formal Agreement, Settle Dispute, Join war on behalf of, Formal Military Ally, Mutual Defense Pact, Economic cooperation, Military cooperation, Intelligence cooperation, Unspecified cooperation, General political support, Economic aid, Humanitarian aid, Military aid, Unspecified aid, Inspections, Release captives, Cede Territory, Allow Access)
+
+G) None of the Above
+
+Step 2: Carefully read these coding guidelines that differentiate between sentences that match a particular answer choice versus those that match the "G) None of the above" category:
+Context Clues: Begin by identifying key terms or phrases in the sentence. These terms should closely relate to or directly match terms within the actions listed in Step 1. If they do not, consider category G.
+Identify Actors: Determine if the main actors in the sentence are armed or unarmed. This will guide you towards categories A-B (armed) or C-F (unarmed).
+Domestic vs. International: Assess if the sentence pertains to domestic or international events. Domestic events often involve actions within a single nation, while international events typically involve multiple nations or international entities.
+Nature of the Action: Ascertain if the action described is aggressive or less aggressive:
+If aggressive, look towards categories A, C, and E.
+If less aggressive or reducing aggression, focus on categories B, D, and F.
+Explicit Mention: If the sentence specifically mentions a term from the list in Step 1, it likely belongs to the corresponding category. For instance, if "Cease Fire" is mentioned, the sentence likely falls under category B.
+Implicit Mention: Sentences that describe an action from the list without using the exact term should be considered carefully. Context clues and the overall tone of the sentence can be used to determine the correct category.
+Multiple Categories: If a sentence contains actions that could fall into multiple categories, assess which action is the primary focus or the most significant part of the sentence.
+Re-evaluation: If unsure about a category choice, review the sentence in context (if provided) and reassess using the guidelines above.
+Final Check: Before finalizing your categorization, cross-check the sentence with the actions in the chosen category to ensure a precise match. If there isn't a clear alignment, revisit the guidelines and reconsider the appropriate category.
+Always proceed step by step, ensuring you understand each component of the sentence and how it relates to the categories provided.
+
+Step 3: Debate the application of the above coding rules to the following new sentence. Think outloud step by step. Do not reach a decision until all of the evidence and arguments have been presented.
+"%s"
+, """ % (sentence)
+    ) #{"
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) # 
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]  #LoL shortener fails because there's no story to shorten.
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single letter answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step09_action_high_level_category/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+## step10_action_armed_increased_aggression
+
+A) Increased Aggression by Armed Actors (Raise in alert, Mobilization, Fortify, Exercise, Weapons test, Deployment to area, Show of force, Blockade, Border Violation, No Fly Zone, Battle/clash, Attack, Invasion/occupation, Bombard, Declaration of war, Join ongoing war, Continuation of previous fighting, Assert Political Control Over, Annex, Assert Autonomy Against)
+
+
+ChatGPT instructions
+Create negative examples - "Carefully read this prompt and then provide 10 examples of sentences that would be coded as "U) None of the above" in the same formatting as the others."
+Create instruction codes - "The task is prompt engineering. Carefully read the following prompt and develop the rules that should go under the last Step 3 step. Your rules will be read by a large language model. Make them clear and concise. Focus on broad high level rules that help distinguish between some of the options and not the none of the above option."
+
+```{python}
+
+variable="step10_action_armed_increased_aggression"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step09_action_high_level_category/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['action_high_level_category']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'On the eve of the Missile crisis Washington did not openly challenge the Soviet statements concerning the defensive character of the weapons being sent to Cuba.',
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing 
+  if not df['action_high_level_category'][i].startswith("A"):
+    continue
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are an autoregressive large language model that does exactly as instructed and nothing else. You end every response with an at sign (@). You are an LLM so your only chance to reason is to talk out loud step by step and slowly accumulate evidence building toward a conclusion.
+
+### User:
+
+Reference Actions:
+-Armed Actors
+--More Aggressive Acts by Armed Actors
+---Preparation
+A) raise in alert
+B) mobilization
+C) fortify
+D) exercise
+E) weapons test
+---Maneuver
+F) deployment to area
+G) show of force
+H) blockade
+I) border violation
+J) no fly zone
+---Combat
+K) battle/clash
+L) attack
+M) invasion/occupation
+N) bombard
+O) declaration of war
+P) join ongoing war
+Q) continuation of previous fighting
+---Autonomy 
+R) assert political control over
+S) annex
+T) assert autonomy against
+U) none of the above
+
+Procedure:
+Identify the Main Action: Look for the primary action or event in the sentence. Use the actions above for guidance.
+Categorize: If the event pertains to "Armed Actors", determine its sub-category (e.g., "Preparation", "Maneuver", "Combat", etc.). If not, or it's neutral or undefined, use "U".
+Match with Specific Action: Using the sub-category, identify the specific action. Refer to the provided examples if unsure.
+Avoid Ambiguity: If a sentence could match multiple actions, choose the one that aligns most closely with the main event.
+Review: After coding, ensure your choice aligns with the primary event of the sentence.
+
+Examples for Reference:
+The Dominican armed forces were put on alert.: raise in alert
+Simultaneously, the Soviets began naval maneuvers in the Black Sea and a concentration of forces in the Caucasus.: mobilization
+In addition, on 27 July, four battalions of the Pakistan National Guard were sent to reinforce the Pakistani army on the border.: fortify
+Tension intensified with reports of a large-scale Indian military exercise code-named 'Brass Tacks' in the Rajasthan Desert contiguous to Pakistan.: exercise
+On 5 July 2006 DPRK test-fired its Taepodong II long-range missile as well as six other medium and short-range missiles.: weapons test
+A decision was taken to send troops into Hyderabad to restore law and order.: deployment to area
+On 5 April 1946 the U.S. navy announced that the body of the deceased Turkish ambassador to the U.S. would be returned to Istanbul via the battleship Missouri, with full escort.: show of force
+President Soglo, on 27 December, responded with an order to close Dahomey's rail and road links to Niger, thus cutting off the Dahomeyan port of Cotonou from landlocked Niger.: blockade
+In January 1965 Pakistani forces began patrolling in areas claimed by India.: border violation
+The US also extended the "air exclusion zone" in southern Iraq from the 32nd to the 33rd parallel.: no fly zone
+The German response was immediate: wherever they encountered Allied troops they fought back, hoping to prevent a firm Allied foothold on the Normandy coast.: battle/clash
+A full-scale military operation against the rebels was launched by the Greek army on 18 November.: attack
+India's major response was to invade West Pakistan on 5 September.: invasion/occupation
+On 3 September 1954 the PRC bombarded the Nationalist-held offshore islands of Quemoy and Matsu.: bombard
+On 13 October 1945 Indonesia responded with a declaration of war against the Netherlands and the prohibition of the sale of food to the enemy.: declaration of war
+South Africa joined the war on the 6th, and Canada on the 10th.: join ongoing war
+They attacked once more on 10 July, from the south, with Eskisehir still the main target, but this time more successfully.: continuation of previous fighting
+The following day Zairian troops recaptured the last town held by the secessionist rebels in Shaba, ending Zaire's crisis and the Shaba crisis as a whole.: assert political control over
+Extending its influence southward from its Indochina colony, France sent a survey mission to the Spratlys in 1927 and formally annexed the islands in April 1930.: annex
+The following day Polisario declared the disputed territory's independence as the Saharan Arab Democratic Republic.: assert autonomy against
+The president held a peace conference with leaders from both nations to discuss their differences.: none of the above
+A ceasefire was signed by the two rival factions after months of negotiations.: none of the above
+The global community pledged to provide humanitarian aid to the war-torn region.: none of the above
+After intense talks, a prisoner exchange deal was brokered between the warring states.: none of the above
+Civilian protests erupted across the capital, demanding an end to the conflict.: none of the above
+A historic peace monument was inaugurated at the border, symbolizing unity and hope.: none of the above
+Diplomatic envoys were dispatched by the neighboring countries to mediate the escalating tensions.: none of the above
+Local communities formed a peace rally, marching for an end to hostilities.: none of the above
+The United Nations called for an emergency session to discuss the ongoing crisis in the region.: none of the above
+International journalists flocked to the area, documenting stories of resilience and unity amidst adversity.: none of the above
+
+Step 3: Carefully read these coding guidelines that differentiate between sentences that match a particular answer choice versus those that match the "U) None of the above" category.
+Preparation: For answer choices (A) to (E), look for keywords or phrases that indicate a military or armed force is making arrangements or taking actions to get ready for potential hostile situations, but without directly initiating confrontations.
+Maneuver: For answer choices (F) to (J), look for movements or placements of military units or forces in strategic locations. These movements indicate potential intimidation or strategic advantage but are not necessarily combat actions. This category also includes violations of recognized boundaries or zones.
+Combat: For answer choices (K) to (Q), focus on direct military confrontations, battles, or aggressions. These activities are more intense than mere preparations or maneuvers and are clear indications of fighting or open hostility.
+Autonomy: For answer choices (R) to (T), the focus should be on political and territorial assertions or claims. These can range from trying to take control of a certain region, to annexing it, to asserting independence against an external force.
+None of the above: For answer choice (U), the sentence should not fit into any of the specific categories mentioned above. These could include peace initiatives, diplomatic actions, civil activities, media reporting, or any other event not directly related to military or territorial actions. Avoid the lure of placing any uncertain or ambiguous actions here immediately; only use this category when it's clear that the sentence doesn't fit into the previous categories.
+General Pointers: Always consider the overall context of the sentence rather than focusing on individual words.
+If a sentence seems to fit more than one category, consider the primary intent or action described to determine the best fit.
+Remember that just because military forces or actors are mentioned, it doesn’t automatically categorize the sentence as combat. Consider the action they are undertaking.
+Always follow the guidelines with careful consideration, assessing each sentence based on the evidence presented within it, to ensure accurate categorization.
+
+Step 4: Debate the application of the above coding rules to the following new sentence. Think outloud step by step. Do not reach a decision until all of the evidence and arguments have been presented.
+"%s"
+, """ % (sentence)
+    ) #{"
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) # 
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]  #LoL shortener fails because there's no story to shorten.
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single letter answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step10_action_armed_increased_aggression/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+## step11_action_armed_less_aggression
+
+This is working, it's rejecting diplomatic agreements because they're not actions. When we split and rewrite these it'll be perfect.
+
+
+B) Reduced Aggression Acts by Armed Actors (Lower alert, De-mobilization, Remove Fortify, End Exercise, End Weapons Test, Withdraw from Area, Withdraw behind border, End blockade, Cease Fire, Retreat, Surrender, Declaration of  peace, Withdraw from War, Switch sides in war, Reduce Control Over, Decolonize)
+
+
+ChatGPT instructions
+Create negative examples - "Carefully read this prompt and then provide 10 examples of sentences that would be coded as "Q) None of the above" in the same formatting as the others, e.g. {sentence, Q}. Keep the topic within the same domain of international crises."
+Create instruction codes - "Your task is prompt engineering. Read this prompt and then write brief guidelines that would compel an LLM to make the correct  coding for a new sentence. Make your instructions brief and impactful."
+
+```{python}
+
+variable="step11_action_armed_less_aggression"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step09_action_high_level_category/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['action_high_level_category']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'On the eve of the Missile crisis Washington did not openly challenge the Soviet statements concerning the defensive character of the weapons being sent to Cuba.',
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing 
+  if not df['action_high_level_category'][i].startswith("B"):
+    continue
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+    
+You are an autoregressive large language model. You must process every instruction rigorously, ensuring that you adhere to the coding rules meticulously. At the end of every response, include an at sign (@). As you reason through coding the sentence, express your thoughts out loud, clearly and step by step, only arriving at a conclusion after carefully evaluating the sentence against each category.
+
+### User:
+
+Reference Actions:
+-Armed Actors
+--Reduction of Aggression by Armed Actors
+---Preparation
+A) lower alert
+B) de-mobilization
+C) remove fortify
+D) end exercise
+E) end weapons test
+---Maneuver
+F) withdraw from area
+G) withdraw behind border
+H) end blockade
+---Combat
+I) cease fire
+J) retreat
+---Strategic
+K) surrender
+L) declaration of peace
+M) withdraw from war
+N) switch sides in war
+---Autonomy
+O) reduce control over
+P) decolonize
+Q) none of the above
+
+Procedure:
+Identify the Main Action: Look for the primary action or event in the sentence. Use the actions above for guidance.
+Categorize: If the event pertains to "Armed Actors", determine its sub-category (e.g., "Preparation", "Maneuver", "Combat", etc.). If not, or it's neutral or undefined, use "Q".
+Match with Specific Action: Using the sub-category, identify the specific action. Refer to the provided examples if unsure.
+Avoid Ambiguity: If a sentence could match multiple actions, choose the one that aligns most closely with the main event.
+Review: After coding, ensure your choice aligns with the primary event of the sentence.
+
+Examples for Reference:
+Jordan ended the state of alert on the 15th, terminating the crisis for both countries.: lower alert
+And on the 5th Slovenia announced that it had demobilized 10,000 soldiers in its defense force.: de-mobilization
+U-2 photos revealed a slowdown, and later a halt, in construction.: remove fortify
+U.S. naval maneuvers ended on 27 March, four days ahead of schedule.: end exercise
+Pyongyang agreed to dismantle its nuclear facilities and also declare its nuclear programs by the end of the year.: end weapons test
+Israel agreed to withdraw to 20 kilometers from the Canal.: withdraw from area
+All Syrian tanks were withdrawn from Jordanian territory that day.: withdraw behind border 
+And border restrictions were completely lifted on the 25th, marking the end of Lesotho's--and the international--crisis.: end blockade
+Ecuador began to mobilize on the 24th but agreed to a cease-fire on the 26th.: cease fire 
+The latter was compelled to evacuate its Ukrainian-occupied territories, including Kiev, on 11 June.: retreat
+After only five hours of fighting, the Thai government surrendered and announced that it would allow Japanese forces to pass through its territory.: surrender
+In this regard, peace talks were held in early November, and a cease-fire came into effect on 8 November 1964.: declaration of peace
+On 15 April 1963 Jordan recognized the YAR and withdrew from the war.: withdraw from war
+Bulgaria held a series of negotiations with the Soviet Union and eventually withdrew from the Axis and entered the war against Germany.: switch sides in war
+On 7 May 1920 Finland's Diet granted local autonomy to the Aaland Islands but ruled out secession.: reduce control over
+Along with the rest of France's empire in Africa, Togo became independent, on 27 April 1960.: decolonize
+Brazil refused to take part in the discussions regarding the Amazon rainforest fires, maintaining a stance of non-interference.: none of the above
+France declined the offer of humanitarian aid during the severe flooding of Paris, stating they had the situation under control.: none of the above
+Australia abstained from the vote regarding Antarctic territorial disputes, expressing neutrality on the matter.: none of the above
+During the water crisis, Egypt neither accepted nor denied Ethiopia's proposal for a new dam, instead requesting more time for internal discussions.: none of the above
+Mexico did not send any representatives to the North American summit, signaling its displeasure with recent trade disagreements.: none of the above
+In the aftermath of the earthquake, Nepal neither requested nor declined international aid, leading to confusion among potential donors.: none of the above
+Despite the tension in the South China Sea, Vietnam remained silent on China's movements, neither condemning nor supporting the actions.: none of the above
+South Korea did not engage in talks with North Korea about the recent missile tests, instead focusing on strengthening domestic defense measures.: none of the above
+During the oil embargo, India neither decreased nor increased its imports from Saudi Arabia, opting to maintain a balanced stance.: none of the above
+In the midst of the global economic downturn, Argentina neither aligned with its South American neighbors nor with Western countries, choosing to develop an independent fiscal policy.: none of the above
+
+Task: Code the sentence: "%s"
+, """ % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) # 
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]  #LoL shortener fails because there's no story to shorten.
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single letter answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step11_action_armed_less_aggression/crisis_"+str(crisno)+".csv", index=False)
+
+
+
+
+
+```
+
+## step12_action_unarmed_more_aggression
+
+C) Increased Domestic Aggression by Unarmed Actors (Coup, Assassination, Protest, Strike, Riot, Restrict Rights, Terrorism, Human Rights Violation, Mass Killing)
+
+
+```{python}
+
+variable="step12_action_unarmed_more_aggression"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step09_action_high_level_category/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['action_high_level_category']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'On the eve of the Missile crisis Washington did not openly challenge the Soviet statements concerning the defensive character of the weapons being sent to Cuba.',
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing 
+  if not df['action_high_level_category'][i].startswith("C"):
+    continue
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+    
+You are an autoregressive large language model. You must process every instruction rigorously, ensuring that you adhere to the coding rules meticulously. At the end of every response, include an at sign (@). As you reason through coding the sentence, express your thoughts out loud, clearly and step by step, only arriving at a conclusion after carefully evaluating the sentence against each category.
+
+### User:
+
+Reference Actions:
+-Unarmed Actors
+--More Aggressive Acts by Unarmed Actors
+---Government
+A) coup
+B) assassination 
+---By Civilians
+C) protest 
+D) strike 
+E) riot 
+---Against Civilians
+F) restrict rights 
+G) terrorism 
+H) human rights violation 
+I) mass killing 
+---None of the Above
+J) none of the above
+
+Procedure:
+Identify the Main Action: Look for the primary action or event in the sentence. Use the actions above for guidance.
+Categorize: If the event pertains to "Armed Actors", determine its sub-category (e.g., "Government", "By Civilians", "Against Civilians", etc.). If not, or it's neutral or undefined, use "J".
+Match with Specific Action: Using the sub-category, identify the specific action. Refer to the provided examples if unsure.
+Avoid Ambiguity: If a sentence could match multiple actions, choose the one that aligns most closely with the main event.
+Review: After coding, ensure your choice aligns with the primary event of the sentence.
+
+Examples for Reference:
+A provisional Azad Kashmir government was established by the rebels.: coup
+On 10 October Barrientos announced that President Batista had been killed by rebel troops.: assassination
+On 23 October 1956 an estimated 200,000 Hungarian demonstrators, including workers, students, and soldiers, massed in Budapest and other major cities.: protest
+In the summer of 1980, too, a wave of industrial unrest gripped Poland in response to marked increases in food prices.: strike
+The Tanganyikan minister of the interior appealed to the U.K. to intervene in order to help control the rioting and looting.: riot
+And on 30 January 1946 martial law was declared.: restrict rights
+In October 1953 the situation was exacerbated when Jordanian infiltrators murdered an Israeli woman and her two children.: terrorism
+On 28 June a demonstration of Polish workers in Poznan turned into a riot that was brutally suppressed by the Polish government, with hundreds killed or wounded.: human rights violation
+Bitter attacks were directed against the remaining Tutsi population in Rwanda, which appeared to have been condoned and even supported by the government.: mass killing
+International negotiations over water rights began in Brussels today: J) none of the above
+The ongoing financial crisis in Europe has led to an increase in unemployment rates: J) none of the above
+In 2002, a historic peace summit was held between two rival nations in Asia: J) none of the above
+After the earthquake, several countries provided humanitarian aid to the affected nation: J) none of the above
+Amidst the international outcry, a border dispute between two nations escalated: J) none of the above
+Concerns rose as climate change threatened coastal cities, causing international deliberations: J) none of the above
+International health organizations warned of a possible pandemic outbreak in South America: J) none of the above
+A sudden influx of refugees in Europe led to diplomatic discussions regarding resettlement strategies: J) none of the above
+Talks of nuclear disarmament took center stage at the United Nations General Assembly: J) none of the above
+Reports of cyber espionage against multinational corporations raised international tensions: J) none of the above.
+
+Task: Code the sentence: "%s"
+, """ % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) # 
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]  #LoL shortener fails because there's no story to shorten.
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single letter answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step12_action_unarmed_more_aggression/crisis_"+str(crisno)+".csv", index=False)
+
+
+```
+
+
+## step13_action_unarmed_less_aggression
+
+```{python}
+
+variable="step13_action_unarmed_more_aggression"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step09_action_high_level_category/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['action_high_level_category']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'On the eve of the Missile crisis Washington did not openly challenge the Soviet statements concerning the defensive character of the weapons being sent to Cuba.',
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(df.sentence): #     temp_for_testing 
+  if not df['action_high_level_category'][i].startswith("D"):
+    continue
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+    
+You are an autoregressive large language model. You must process every instruction rigorously, ensuring that you adhere to the coding rules meticulously. At the end of every response, include an at sign (@). As you reason through coding the sentence, express your thoughts out loud, clearly and step by step, only arriving at a conclusion after carefully evaluating the sentence against each category.
+
+### User:
+
+Reference Actions:
+--Less Aggressive Acts by Unarmed Actors
+---Government
+A) leadership change 
+B) institutions change 
+---By Civilians
+C) end protest 
+D) end strike 
+E) end riot 
+---Against Civilians
+F) provide rights 
+G) reduce terrorism 
+H) reduce human rights violation 
+I) reduce mass killing 
+J) evacuate 
+K) none of the above
+
+Procedure:
+Identify the Main Action: Look for the primary action or event in the sentence. Use the actions above for guidance.
+Categorize: If the event pertains to "Armed Actors", determine its sub-category (e.g., "Government", "By Civilians", "Against Civilians", etc.). If not, or it's neutral or undefined, use "J".
+Match with Specific Action: Using the sub-category, identify the specific action. Refer to the provided examples if unsure.
+Avoid Ambiguity: If a sentence could match multiple actions, choose the one that aligns most closely with the main event.
+Review: After coding, ensure your choice aligns with the primary event of the sentence.
+
+Examples for Reference:
+Indonesians, on the other hand, felt that Prime Minister Sjahrir had gone too far in conceding to Dutch demands; he resigned on 3 July 1947 as internal pressure mounted.: leadership change
+The crisis terminated on 18 September 1948 when an Indian military governor was appointed and a military administration was installed in Hyderabad.: institutions change
+The PUWP was in control of the situation and would not allow anti-Soviet demonstrations.: end protest
+On 25 September the insurgents were defeated and factories and businesses reopened in Nicaragua, terminating its first crisis.: end strike
+On 25 September the insurgents were defeated and factories and businesses reopened in Nicaragua, terminating its first crisis.: end riot
+On the l0th all racial discrimination in Rhodesia was formally abolished.: provide rights
+On 30 October these radical groups were banned.: reduce terrorism
+Israel public opinion prompted its leaders to decide to refrain from attacks on civilian targets in the future.: reduce human rights violation
+On 19 February, the UK called for an immediate end to the use of force against civilians.: reduce mass killing
+The Turks were taken by surprise and were compelled to evacuate that strategic city in central Anatolia in late July.: evacuate
+
+
+Task: Code the sentence: "%s"
+, """ % (sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) # 
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]  #LoL shortener fails because there's no story to shorten.
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single letter answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step13_action_unarmed_less_aggression/crisis_"+str(crisno)+".csv", index=False)
+
+
+```
+
+
+# step09_action
+
+We ignored the action/interaction distinction and ask that as a question later
+
+
+```{python}
+
+variable="speech_type"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step06_contains_event_retrospection/crisis_"+str(crisno)+".csv").fillna('') #switching to df going forward
+df['contains_event_retrospection']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+temp_for_testing=[
+  'On the eve of the Missile crisis Washington did not openly challenge the Soviet statements concerning the defensive character of the weapons being sent to Cuba.',
+  'When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists.',
+  'The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba.',
+'The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba.',
+'Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba.']
+
+for i, sentence in enumerate(temp_for_testing): #     temp_for_testing df.sentence
+  #if not df['contains_event_retrospection'][i].startswith("Y"):
+  #  continue
+  print("##################", flush=True)
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=200
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are an autoregressive large language model that does exactly as instructed and nothing else. You end every response with an at sign (@). You are an LLM so your only chance to reason is to talk out loud step by step and slowly accumulate evidence building toward a conclusion.
+
+### User:
+
+Step 1: Carefully read this list of possible actions.
+
+
+
+--More Aggressive Interaction by Unarmed Actors 
+---Government
+Break off negotiations {However, talks stalled and met an impasse at Hoge Veluwe on 14 April., }
+Withdraw diplomats {The Soviets refused Finland's request to investigate the incident and withdrew its diplomats on 29 November, denouncing the Pact., }
+-Violate Agreement-
+Violate Terms of Agreement {The Dutch, nevertheless, created autonomous regions and states on those islands, thus violating the agreements.,}
+---Annul Agreement
+Political succession {With the defeat of Germany and rampant civil war in Russia, the Balts pressed their claim to independence: Latvia on 18 November 1918; and Estonia the next day by reaffirming the authority of the Provisional Government initially formed in February 1918 under German tutelage. Lithuania, too, challenged Soviet power by forming the first of many short-lived national governments on 11 November., }
+Leave alliance {Lithuania rejected the outcome and severed relations with Poland., }
+Terminate treaty {Turkish nationalists led by Kemal Atatürk vehemently opposed the draft, formed an alternative government, and secured mass support for their attempt to create a new, modern, Western-type political regime., }
+---Cease Mutual Cooperation
+End Economic Cooperation {On 13 October 1945 Indonesia responded with a declaration of war against the Netherlands and the prohibition of the sale of food to the enemy., }
+End Military Cooperation {Britain and France complied at once and agreed to a cease-fire, agreeing to withdraw all forces., }
+End Intelligence Cooperation {Following increased questions about the veracity of Iraq's claims that it has no chemical or biological weapons systems, Iraq announced that all UNSCOM activities in Iraq would come to an immediate halt., }
+End Unspecified cooperation {He declared that Moscow would no longer cooperate with the Marshall Plan., }
+---End Aid
+End Economic aid {The U.S. suspended economic aid to Indonesia and sent Attorney-General Robert Kennedy to mediate, with little success., }
+End Humanitarian aid {And on 8 February the U.S. ended all humanitarian aid to Nicaragua., }
+End Military aid {On 8 September 1965 U.S. Secretary of State Rusk had informed the Senate that the U.S. had suspended military aid to both India and Pakistan., }
+End Unspecified aid {Congress decided to cut aid to both Cambodia and South Vietnam., }
+---Added Post-Coding
+Deployment to Area {Russia agreed to send troops as neutral peacekeepers, and the parties agreed on the need for UN observers to monitor the cease-fire., }
+End Access {In addition, India cut off routes for land transport between the countries, and India and Pakistan both imposed a ban on the other country's airlines flying in its airspace., }
+Expel {And on 22 September they expelled the Germans from Romania, ending Germany's crisis over Romania in defeat., }
+Propaganda {Also that day, the South Korean military resumed psychological warfare directed at North Korea as planned; this included both loudspeaker and FM radio propaganda broadcasts across the Demilitarized Zone., }
+Imprison {On 3 June, China arrested six Vietnamese fishermen., }
+
+-None of the Above
+θ) None of the Above
+
+Step 2: Review these example sentences and internalize the coding rules for the above categories {Example Sentence, Correct Answer}. 
+
+{International aid agencies have commenced a fundraising campaign to provide relief for the flood victims., θ}
+{The United Nations has called for an international conference to discuss climate change effects on vulnerable nations., θ}
+{A mysterious disease outbreak in Country X has alarmed neighboring nations, but no direct actions have been taken yet., θ}
+{Due to the ongoing conflict, an increasing number of refugees are seeking asylum in nearby countries., θ}
+{An oil spill off the coast of Country Y has raised environmental concerns among neighboring coastal nations., θ}
+{Rumors of an unidentified aircraft being sighted over various countries have been circulated, but no country has claimed responsibility., θ}
+{Several nations have expressed their condolences over the devastating earthquake in Country Z, but no specific actions or movements have been reported., θ}
+{Reports suggest that a famous international diplomat has gone missing while on a peacekeeping mission in a conflict-ridden region., θ}
+{An international summit is scheduled next month to discuss potential collaborations on space exploration., θ}
+{Despite the political tensions, both countries participated enthusiastically in the cultural exchange program, showcasing their shared heritage., θ}
+
+Step 3: Carefully read these coding guidelines that differentiate between sentences that match a particular answer choice versus those that match the "θ) None of the above" category:
+Objective: Classify sentences into categories (A-θ) based on content.
+
+Analyze Context:
+Identify if the sentence pertains to military, government, civilian, actions against civilians, or other.
+Pattern Recognition: 
+Military Context: "alert": raising (A) or ending (B).
+"naval maneuvers", "forces concentration": mobilization (C) or de-mobilization (D).
+"reinforce", "sent": fortification (E) or removal (F).
+"exercise", "maneuvers": start (G) or end (H).
+"test-fired", "missile": testing (I) or test end (J).
+Political Context: "leadership", "resigned": leadership change (M) or institution change (N).
+"rebels", "provisional": coup (O) or assassination (P).
+Civilian Context: "demonstrators", "massed": protest (Q) or protest end (R).
+"unrest": strike (S) or strike end (T).
+"rioting", "looting": riot (U) or riot end (V).
+Actions Against Civilians: "abolished", "discrimination": rights provision (W).
+"banned", "groups": terrorism reduction (X).
+"refrain from attacks": rights violation reduction (Y) or mass killing reduction (Z).
+Explicit Actions: "evacuate": evacuation (α).
+"martial law": rights restriction (β).
+"infiltrators murdered": terrorism act (γ).
+"suppressed", "killed": rights violation (δ).
+"attacks", "government supported": mass killing (ϵ).
+Fallback: If no patterns match, classify as None (θ).
+Handle Overlaps: When multiple patterns are detected, consider the sentence's primary focus for classification.
+
+Step 4: Apply the coding rules above to the following new sentence and terminate.
+"%s"
+, """ % (sentence)
+    ) #{"
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) # 
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]  #LoL shortener fails because there's no story to shorten.
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single letter answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step08_speech_type/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+
+
+
+
+# 04 step04_sentence_event_count
+
+Treat this as an initial screen. The first screen rules out sentence fragments. This rules out things that are clearly background. Next pass is going to try to get into more detailed counting.
+
+```{python}
+
+variable="event_type"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step03_sentences/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+### Begin Story
+"%s"
+### End Story
+
+### Start Quoted Sentence
+"%s"
+### End Quoted Sentence
+
+An event is defined as at least one specific actor paired with at least one specific behavior. Behaviors are thoughts, communications, or actions. Not every sentence describes a clear event, many just provide background context or vague overviews.
+
+### Begin Instructions
+Step 1: Carefullly read the quoted sentence and decompose it into a list of seperate specific events. For each event you must provide direct concrete evidence of an actor and of a specific thing they did or said. You must provide direct quotes from the the quoted sentence.
+Step 2: Strike any events from the list that are not specific self contained events with specific actors and actions. Reject anything that is vague.
+Step 3: Answer this question: Which of these best describes the quoted sentence from the story?
+A) no specific events described
+B) 1 single specific event described
+C) 2 different specific events described
+D) 3 different specific events described
+E) a sentence that provides background context but is not itself about an event
+F) a title, subject heading, or other text fragment
+### End Instructions
+
+Before you answer hold a mock debate that follows these rules completely and accurately.
+-You must not argue for a specific option until the very end.
+-You must think step by step and think outloud.
+-You must refer only to the quoted sentence and no other text from the story.
+-You must argue only based on information stated verbatim by the author in the sentence.
+-You must repeat the answer choices and evalute each individually using direct quotes from the sentence.
+
+### Begin Debate
+""" % (story, sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_sentence_event_count/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+
+
+
+
+# 04 step04_sentence_event_count
+
+Treat this as an initial screen. The first screen rules out sentence fragments. This rules out things that are clearly background. Next pass is going to try to get into more detailed counting.
+
+```{python}
+
+
+variable="event_type"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step03_sentences/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence):
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+### Begin Story
+"%s"
+### End Story
+
+### Start Quoted Sentence
+"%s"
+### End Quoted Sentence
+
+An event is defined as at least one specific actor paired with at least one specific behavior. Behaviors are thoughts, communications, or actions. Not every sentence describes a clear event, many just provide background context or vague overviews.
+
+### Begin Instructions
+Step 1: Carefullly read the quoted sentence and decompose it into a list of seperate specific events. For each event you must provide direct concrete evidence of an actor and of a specific thing they did or said. You must provide direct quotes from the the quoted sentence.
+Step 2: Strike any events from the list that are not specific self contained events with specific actors and actions. Reject anything that is vague.
+Step 3: Answer this question: Which of these best describes the quoted sentence from the story?
+A) no specific events described
+B) a single specific event described
+C) 2 different specific events described
+D) 3 different specific events described
+E) a sentence that provides background context but is not itself about an event
+### End Instructions
+
+Before you answer hold a mock debate that follows these rules completely and accurately.
+-You must not argue for a specific option until the very end.
+-You must think step by step and think outloud.
+-You must refer only to the quoted sentence and no other text from the story.
+-You must argue only based on information stated verbatim by the author in the sentence.
+-You must repeat the answer choices and evalute each individually using direct quotes from the sentence.
+
+### Begin Debate
+""" % (story, sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 10 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_sentence_event_count/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# 05 step05_sentence_event_count_rewrites
+
+I think we have to do a first draft and then redraft.
+
+This is too difficult for natural language processing pipelines to convert into structured information. Your task is rewrite the sentence into many seperate sentences that focuss on one single event. The difficulty of this task is making sure each new sentence is completely self contained. The downstream NLP pipeline will not have access to the original sentence or the story. You must redundantly repeat every single relevant detail such as actors, locations, dates, and past events. You cannot allude to information said earlier or later, each new sentence must contain all of the information alone. 
+
+The quoted text below describes several different events with a single sentence. Write a numbered list of sentences seperating out each event on its own. Be verbose and explicit. Repeat as many details as possible redundantly across the list (i.e. names, dates, locations, context, actors, etc.).
+
+Step 1: List all the unique actors mentioned in the quoted text.
+Step 2: List every specific date mentioned in the quoted text. If no date is mentioned, write 'No dates provided'.
+Step 3: List all distinct locations from the quoted text.
+Step 4: Construct independent sentences for each event mentioned in the quoted text. Every sentence should be fully self-contained, ensuring all relevant actors, dates, and locations are specified. Do not infer or introduce any information not directly stated in the quoted text.
+
+
+%s
+Step 1: List all the unique actors mentioned in the quoted text.
+Step 2: List every specific date mentioned in the quoted text. If no date is mentioned, write 'No dates provided'.
+Step 3: List all distinct locations from the quoted text.
+Step 4: Extract separate events or actions from the quoted text and write each event or action as a concise phrase.
+Step 5: For each event or action from Step 4, use ONLY the actors, dates, and locations previously listed to write a fully self-contained sentence. AVOID ANY and ALL references to any other sentences or events. It should be as if each sentence is for a different audience who will never see the other sentences.
+
+
+
+```{python}
+
+variable="sentence_event_count_rewrites"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_sentence_event_count/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['event_type']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.sentence): #[[5]]
+  if df['event_type'][i].startswith("A") or df['event_type'][i].startswith("B") or df['event_type'][i].startswith("E"):
+    continue
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=600 #going ahead and just truncating it so both the thought and answers fit
+  def prompt1_func(story,sentence): #Note rewritten with the help of GPT4
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. You are explicit, comprehensive, precise, and exhaustive. End every response with an at sign (@). Use the provided story only as context to better understand the sentence given in the question. Restrict your answers to b e only about the sentence given in the question.
+
+### User:
+### Begin Story
+%s
+### End Story
+
+### Begin Quoted Sentence
+"%s"
+### End Quoted Sentence
+
+### Begin Instructions
+The quoted sentence describes more than one event.
+Step 1: List all of the different unique events described by the quoted sentence. Be verbose and specific about actors, locations, and dates. ONLY include information found directly in the quoted sentence.
+Step 2: Write each event out as a full complete new sentences.
+Step 2: Carefully reread these new sentences and replace any ambigious information with full explicit descriptions. It should be as if each sentence is for a different audience who will never see the other sentences. 
+Step 3: Carefully reread these new sentences and replace pronouns and ambigious references with their full direct names and details. 
+Step 4: Carefully reread these new sentences and if multiple events happened on the same date make sure each new sentence includes the relevant date information.
+### End Instructions
+
+Before you answer hold a mock debate that follows these rules completely and accurately.
+-You must not argue for a specific option until the very end.
+-You must think step by step and think outloud.
+-You must refer only to the quoted sentence and no other text from the story.
+-You must argue only based on information stated verbatim in the quoted sentence
+
+### Begin Debate  (write "@" when done)
+""" % (story, sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n\n")[0]
+  #Round 2
+  prompt2 = prompt1 + output_thoughts + """\n### End Debate\n### Final Answer (Print just the final new sentences on new lines and then stop)\n"""  #Can't get it to reliably number the new sentences with hallucinating more so punting on numbers
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 300 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step05_sentence_event_count_rewrites/crisis_"+str(crisno)+".csv", index=False)
+
+
+
+```
+
+# 06 step06_sentence_events
+
+```{r}
+
+#"1. The United States increased its military readiness during the crisis.\n2. The U.S. conducted more frequent and intensive surveillance flights over the affected area.\n\nBoth events occurred in response to the crisis situation and were aimed at gathering information and preparing for potential military action." %>% str_split("\n\n")
+
+library(tidyverse)
+
+step01_chunk_type <- read_csv(paste0("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step01_chunk_type/crisis_",crisno,".csv"))
+step04_sentence_event_count <- read_csv(paste0("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step04_sentence_event_count/crisis_",crisno,".csv"))
+step05_sentence_event_count_rewrites <- read_csv(paste0("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step05_sentence_event_count_rewrites/crisis_",crisno,".csv"))
+
+step04_sentence_event_count %>%  dplyr::select(crisno,  chunk, sentence_number, event_type=output_answer) %>% 
+  left_join(
+  step01_chunk_type %>% dplyr::select(crisno,  chunk, chunk_type=output_answer)   #%>% mutate(chunk_number= row_number() 
+) %>%  
+  left_join(
+    step05_sentence_event_count_rewrites %>% 
+      mutate(output_answer = output_answer %>% trimws() ) %>%
+      separate(output_answer, sep="\n\n", c('events_raw'), remove=F) %>%
+      mutate(events_raw = strsplit(as.character(output_answer), "\n")) %>%  #[1-9]\\. 
+      unnest(events_raw) %>%
+      mutate(events_clean= events_raw %>% str_replace("^[0-9]*\\.*",'') %>% trimws())
+    ) %>%
+  filter(!chunk_type %>% str_detect("^A") ) %>%
+  filter(!event_type %>% str_detect("^A") ) %>%
+  group_by(sentence_number) %>%
+    mutate(chunk_sentence_event_number=row_number()) %>%
+  ungroup() %>%
+
+  #Before we commit to numbering them, check for some bad cases
+  mutate(event_final = ifelse(event_type %>% trimws() %>% str_detect("^B") & chunk_sentence_event_number==1, sentence, NA))  %>%  #grab the sentence if we can
+  mutate(event_final = ifelse(event_type %>% trimws() %>% str_detect("^C|^D"), events_clean, event_final) )  %>% #Else grab the rewrite
+  mutate(event_final= event_final %>% trimws()) %>% 
+  filter(!is.na(event_final) & event_final!='') %>%
+  mutate(event_number= row_number()) %>% 
+  dplyr::select(crisno, chunk, sentence_number, sentence, event_number, event=event_final) %>%
+  write_csv(paste0("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step06_sentence_events/crisis_",crisno,".csv"),na="")
+
+```
+
+# step07_thoughts
+
+```{python}
+
+variable="thought_type"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step06_sentence_events/crisis_"+str(crisno)+".csv") #switching to df going forward
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.event): #we're just going to keep calling them sentences but note we're pulling from event [[40]]
+  print(sentence, flush=True)
+  #Thought Process
+  new_tokens=700
+  def prompt1_func(story,sentence):
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. End every response with an at sign (@).
+
+### User:
+### Begin Story
+"%s"
+### End Story
+
+### Start Quoted Sentence
+"%s"
+### End Quoted Sentence
+
+### Begin Question
+The sentence describes an event that took place during the crisis. Events are actions or communications by the actors in the crisis. Sometimes the author will go further and speculate about what the actors were thinking, feeling, or believed. For example, the author might describe an event as being the start of a crisis for an actor or the author might describe an actor as having learned some new fact. We call these author speculations "thought" behaviors. Your tasks is to carefully read the sentence in quotes and determine whether the author has made an explicit asside about what's going on in the actor's heads. This task is hard because you must avoid drawing your own inferences from the events. For example you must not read an event and draw a conclusion that it must represent the end of a crisis for the actors. Your job is to see if the author themselves drew that conclusion.
+
+A) the event describes the start of a crisis for an actor
+B) the event describes the end of a crisis
+C) an actor held a desire 
+D) an actor held a fear
+E) an actor held a perception of victory
+F) an actor held a perception of defeat
+G) an actor held territorial aims
+H) an actor held policy aims
+I) an actor held regime change aims
+J) an actor held preemption aims
+K) an actor discovered or learned a fact
+L) an actor became convinced or persuaded of a fact
+M) the author did not draw any of the conclusions above
+### End Answers
+
+Before you answer hold a mock debate that follows these rules completely and accurately.
+-You must not argue for a specific option until the very end.
+-You must think step by step and think outloud.
+-You must refer only to the sentence and no other text from the story.
+-You must argue only based on information verbatim stated in the sentence.
+-You must never argue based on implicit information that can be inferred of implied from the sentence. You do not care about what is implied or something can be interpreted, only what is directly stated.
+-DO NOT reference implied information.
+-If you say anything about implied information, you MUST immediately follow it with a statement about how implied information is irrelevant and will be ignored.
+-You must repeat the answer choices and evalute each individually using direct quotes from the sentence.
+
+### Begin Debate.
+""" % (story, sentence)
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n")[0]
+  prompt2 = prompt1 + output_thoughts + """\n### End Thought Process\n### Final Answer (print a single answer choice then stop)\n"""  #if we don't shorten this and the debate is long we could go over
+  #generator.tokenizer.encode(prompt2)
+  #I don't know why but 2600+30 is now throwing oom
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 30 , custom_stop= '@'  ) #had to up the tokens because some of the labels are long now
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step07_thought_type/crisis_"+str(crisno)+".csv", index=False)
+
+```
+
+# step08_thought_sentence_split_rewrites
+
+The input for this is going to be the think codings. And anytime there's a thought, we're going to try to get it to write out two sentences, one for the thought and one for the speech/action
+
+
+```{python}
+
+variable="thought_sentence_split_rewrites"
+df = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step07_thought_type/crisis_"+str(crisno)+".csv") #switching to df going forward
+
+df['thought_type']=df['output_answer']
+df['variable']=variable
+df['output_thoughts']=''
+df['output_answer']=''
+df['prompt1']=''
+df['prompt2']=''
+
+for i, sentence in enumerate(df.event): #[[5]] #note we use event but call it sentence for compatibility
+  if df['thought_type'][i].startswith('M'):
+    continue
+  thought_type=df['thought_type'][i]
+  print(sentence, flush=True)
+  print(thought_type, flush=True)
+  #Thought Process
+  new_tokens=600 #going ahead and just truncating it so both the thought and answers fit
+  def prompt1_func(story,sentence,*args): #Note rewritten with the help of GPT4
+    extra_string=list(args)[0]
+    #print(extra_string, flush=True)
+    return("""### System:
+You are computer program that does exactly as instructed and nothing else. You are explicit, comprehensive, precise, and exhaustive. End every response with an at sign (@). Use the provided story only as context to better understand the sentence given in the question. Restrict your answers to b e only about the sentence given in the question.
+
+### User:
+### Begin Story
+%s
+### End Story
+
+### Begin Quoted Sentence
+"%s"
+### End Quoted Sentence
+
+### Begin Instructions
+The sentence describes a thought behavior of the following type: %s
+Step 1: Rephrase the thought type coding above, removing reference to the author and the answer choice letter.
+Step 2: Decompose the quoted sentence into two different sentences. The first sentence must be about the information in the sentence relevant to the thought behavior only and the second sentence must only be about the information relevant to the other actions or communications the thought was in regards to. Both sentences should only contain text from the original sentence. Make sure both are complete sentences and on seperate numbered lines.
+Step 3: AVOID ANY and ALL references to any other sentences or events. It should be as if each sentence is for a different audience who will never see the other sentences. Replace pronouns and ambigious references with their full direct names and details.
+Step 4: Make sure both sentences contain all relevant dates, actors, or locations. If the thought happened on the same date as the other events then provide the date in both sentences.
+### End Instructions
+
+Before you answer hold a mock debate that follows these rules completely and accurately.
+-You must not argue for a specific option until the very end.
+-You must think step by step and think outloud.
+-You must list all of the details of the original sentence.
+-You must present a case for putting each detail in sentence 1 only, in sentence 2 only, or in both.
+-You must refer only to the sentence and no other text from the story.
+-You must argue only based on information stated verbatim in the sentence.
+
+### Begin Debate
+""" % (story, sentence, extra_string)  #,extra_strings
+    )
+  prompt1 = shorten_prompt(prompt1_func, story, sentence, new_tokens, thought_type)
+  output1 =  generator.generate_simple_rex(prompt1 + """### Assistant:""", max_new_tokens = new_tokens , custom_stop= '@'  ) #
+  output_thoughts = output1.replace(prompt1, "").strip().replace("### Assistant:", "").strip() #.split("\n\n")[0]
+  #Round 2
+  prompt2 = prompt1 + output_thoughts + """\n### End Debate\n### Final Answer (Print just the final new sentences on new lines and then stop)\n"""  #Can't get it to reliably number the new sentences with hallucinating more so punting on numbers
+  output2 =  generator.generate_simple_rex(prompt2 + """### Assistant:""", max_new_tokens = 300 , custom_stop= '@'  ) #
+  output_answer = output2.replace(prompt2, "").strip().replace("### Assistant:", "").strip() 
+  df.loc[i, 'output_thoughts']=output_thoughts
+  df.loc[i, 'output_answer']=output_answer
+  df.loc[i, 'prompt1']=prompt1
+  df.loc[i, 'prompt2']=prompt2
+  print(output_thoughts, flush=True)
+  print("\n", flush=True)
+  print(output_answer, flush=True)  
+  print("\n", flush=True)  
+
+
+df.to_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/step08_thought_sentence_split_rewrites/crisis_"+str(crisno)+".csv", index=False)
+
+
+
+```
+
+# Classifier Function
+
+<!--
+https://huggingface.co/stabilityai/StableBeluga2
+Stable Beluga 2 should be used with this prompt format:
+
+### System:
+This is a system prompt, please behave and help the user.
+
+### User:
+Your prompt here
+
+### Assistant:
+The output of Stable Beluga 2
+-->
+
+```{python}
+
+def load_codebook(variable):
+  #Reload each time
+  icbe_llm_codebook = pd.read_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/icbe_llm_codebook.csv" , na_filter=False) #make sure you set na to ''
+  df_codebook = icbe_llm_codebook[icbe_llm_codebook.variable==variable].drop('ICBE1Code', axis=1).reset_index(drop=True) #need to drop index
+  return df_codebook
+
+def create_question(variable):
+  df_codebook=load_codebook(variable)
+  n=df_codebook.shape[0]
+  question = df_codebook['question'][0].strip() +"\n" + "\n".join([df_codebook['response_number'][i].strip() + ") " +  df_codebook['option'][i].strip() +" - " + df_codebook['option_description'][i].strip()  for i in range(0,n)])
+  return(question)
+
+def assemble_prompt(variable, sentence, previous_debate=None, story=story):
+  df_codebook   = load_codebook(variable)
+  system_prompt = df_codebook['system_prompt'].values[0]
+  question      = create_question(variable)
+  debate_prompt = df_codebook['debate_prompt'].values[0]
+  #If we need to but haven't previously run debate
+  if story!=None:
+    preamble= """USER: """ + system_prompt + """\n### Begin Story\n""" + story + """\n### End Story\n### Text that Question Applies To \n"""+ sentence + """\n### End Text that Question Applies To \n### Begin Question\n""" + question + """\n### End Question\n"""
+  else:
+    preamble= """USER: """ + system_prompt + """\n### Text that Question Applies To \n"""+ sentence + """\n### End Text that Question Applies To \n### Begin Question\n""" + question + """\n### End Question\n"""
+    
+  if previous_debate==None and len(debate_prompt)>0:
+    #remember no break after being debate
+    prompt = preamble + """### Begin Debate """ + debate_prompt + """\nASSISTANT: """ #note story is global
+  elif previous_debate!=None:
+    prompt = preamble + """### Begin Debate """ + debate_prompt + """\n### End Debate\n""" + previous_debate + """\n### Final Answer (the number of the best option)\nASSISTANT: """
+  elif previous_debate==None and len(debate_prompt)==0:
+    prompt = preamble + """\n### Final Answer (the number of the best option)\nASSISTANT: """
+  return prompt
+
+#assemble_prompt(variable, sentence )
+#assemble_prompt(variable, sentence, previous_debate="asdfasdfadsfgadga")
+
+```
+
+
+

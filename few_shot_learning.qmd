@@ -1,0 +1,1688 @@
+---
+title: "Few Shot Learning"
+format: html
+editor: source
+---
+
+# Setup
+
+
+```{r}
+set.seed(1) 
+Sys.setenv(RETICULATE_PYTHON = "/home/skynet3/miniconda3/bin/python3")
+library(reticulate)
+use_python("/home/skynet3/miniconda3/bin/python3")
+crisno=196
+```
+
+# Shorten
+
+```{python}
+
+crisno=196
+
+def shorten_prompt(prompt_func, story, sentence, new_tokens, *args): #pass in the function
+  token_limit=2500 #this was supposed to be 2750 but I'm getting ooms at 2600??
+  #
+  story=story.split('References:')[0].strip() #first just try to shorten the story by removing referneces
+  current_count = generator.tokenizer.encode(prompt_func(story,sentence, *args), return_mask = False).shape[1] + new_tokens
+  if current_count > token_limit:
+    tokens_over=current_count-token_limit
+    final=prompt_func( generator.tokenizer.decode( generator.tokenizer.encode(story)[:,:-tokens_over] )[0] + " ...",sentence, *args) #Ok now we pull exactly the right amount of tokens off
+    final_count = generator.tokenizer.encode(final, return_mask = False).shape[1]
+    if final_count>token_limit:
+      raise Exception("Guessed wrong and too many tokens")
+    #print(generator.tokenizer.encode(final, return_mask = False).shape[1], flush=True)
+    return(final)
+  else:
+    return(prompt_func(story,sentence, *args))
+
+
+
+```
+
+
+```{python}
+
+import pandas as pd
+import re
+
+
+#https://github.com/turboderp/exllama/blob/master/example_basic.py
+#!pip install flash-attn --no-build-isolation
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:64"
+
+import os
+os.getcwd()
+import sys
+sys.path.insert(0, "/home/skynet3/Downloads/exllama/")
+from model import ExLlama, ExLlamaCache, ExLlamaConfig
+
+from tokenizer import ExLlamaTokenizer
+from generator import ExLlamaGenerator
+import os, glob
+import torch
+
+def icbe_llm_generator():
+
+  #You are a natural language processing pipeline. You extract entities from text. Parse the text carefully and return every single person, place, and thing mentioned in the text.
+  
+  #I'm processing prompts at about 41 tokens a second and producing responses at about 14 tokens a second
+  #/home/skynet3/Downloads/exllama
+  #python test_benchmark_inference.py -d <path_to_model_files> -p -ppl
+  #python example_chatbot.py -d "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/" -un "Jeff" -p prompt_chatbort.txt
+  #python webui/app.py -d "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/"
+  
+  #python webui/app.py -d "/home/skynet3/Downloads/LLAMA/StableBeluga2-GPTQ/" -gs 17.2,24
+  #python webui/app.py -d "/home/skynet3/Downloads/LLAMA/airoboros-l2-70B-gpt4-1.4.1-GPTQ/" -gs 17.2,24 -length 4096
+  
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/airoboros-l2-70B-gpt4-1.4.1-GPTQ/"
+  model_directory =  "/home/skynet3/Downloads/LLAMA/Platypus2-70B-Instruct-GPTQ/" #https://huggingface.co/garage-bAInd/Platypus2-70B-instruct
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/platypus-main/Platypus2-70B-Instruct-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/StableBeluga2-GPTQ-4ibt-32g/"
+
+
+  # Directory containing model, tokenizer, generator
+  
+  #model_directory =  "/mnt/str/models/llama-13b-4bit-128g/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/Llama-2-13B-chat-GPTQ/"
+  #model_directory =  "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_temp/Wizard-Vicuna-30B-Uncensored-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/LLaMA-30b-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/guanaco-33B-GPTQ/"
+  #model_directory =  "/home/skynet3/Downloads/LLAMA/falcon-40b-instruct-3bit-GPTQ/"
+  
+  # Locate files we need within that directory
+  
+  tokenizer_path = os.path.join(model_directory, "tokenizer.model")
+  model_config_path = os.path.join(model_directory, "config.json")
+  st_pattern = os.path.join(model_directory, "*.safetensors")
+  model_path = glob.glob(st_pattern)[0]
+  
+  # Create config, model, tokenizer and generator
+  
+  config = ExLlamaConfig(model_config_path)               # create config from config.json
+  config.model_path = model_path                          # supply path to model weights file
+  
+  #Rex's special additions
+  config.set_auto_map("17.2,24") #This did make it allocate to both #https://huggingface.co/TheBloke/guanaco-65B-GPTQ/discussions/21
+  #config.set_auto_map("16.2,24") #"15.5. 24 is what I use.""  https://github.com/turboderp/exllama/issues/191
+  config.max_input_len = 2900 #4096 #3072 #4096 #4096  #oh interesting if I raise this it actually lowers my tokens
+  config.max_seq_len   = 2900 #3072 #4096 #I don't understand the difference between these two.
+  config.flash_attn = 2900 #3072 #4096 #experimenting to see if this works #this one is wire to input length.
+  
+  model = ExLlama(config)                                 # create ExLlama instance and load the weights
+  tokenizer = ExLlamaTokenizer(tokenizer_path)            # create tokenizer from tokenizer model file
+  
+  tokenizer.encode('#') #396
+  tokenizer.eos_token
+  tokenizer.eos_token_id
+  tokenizer.encode(tokenizer.eos_token)
+  
+  cache = ExLlamaCache(model)                             # create cache for inference
+  
+  # monkey patch generator simple to have a custom stop token
+  def generate_simple_rex(self, prompt, max_new_tokens = 128, custom_stop=None):
+      self.end_beam_search()
+      ids, mask = self.tokenizer.encode(prompt, return_mask = True)
+      self.gen_begin(ids, mask = mask)
+      max_new_tokens = min(max_new_tokens, self.model.config.max_seq_len - ids.shape[1])
+      eos = torch.zeros((ids.shape[0],), dtype = torch.bool)
+      for i in range(max_new_tokens):
+        token =  generator.gen_single_token(mask = mask)
+        token_as_string =  generator.tokenizer.decode( token )[0]
+        #print(token_as_string)
+        if custom_stop in token_as_string:
+          #print("breaking!")
+          generator.sequence=generator.sequence[0,:-1] #strip off that last token
+          break
+        for j in range(token.shape[0]):
+          if token[j, 0].item() ==  generator.tokenizer.eos_token_id: eos[j] = True
+        if eos.all(): break
+      text = self.tokenizer.decode(self.sequence[0] if self.sequence.shape[0] == 1 else self.sequence)
+      return text
+    
+  ExLlamaGenerator.generate_simple_rex = generate_simple_rex #monkey patch in our change
+  generator = ExLlamaGenerator(model, tokenizer, cache)   # create generator
+  
+  #generator.end_beam_search()
+  #ids, mask = generator.tokenizer.encode("USER: Print 5 pounds signs, e.g. '#####' ASSISTANT:", return_mask = True)
+  #generator.gen_begin(ids, mask)
+  #token_as_string=tokenizer.decode(generator.gen_single_token(mask = mask))
+  #'#####' #is a token. Hilarious.
+  
+  tokenizer.eos_token_id
+  tokenizer.encode('a')
+  tokenizer.decode(torch.tensor([[2]]))
+  # Configure generator
+  
+  generator.disallow_tokens([tokenizer.eos_token_id])
+  
+  #Here is my attempt to make it as deterministic as possible.
+  #0 temperature throws an error. top_k=1 supposedly ignores everything else and is perfectly deterministic.
+  generator.settings.token_repetition_penalty_max = 1.0 #ok if you lower this to 0 it just repeats over and over again
+  #big picture if you threshold with top_k =1 you can let tthe temp up a bit and p down and get the same result at much much faster perf.
+  generator.settings.temperature = 0.2 #0.01 #0.95
+  generator.settings.top_p = 0.8 #0.99 #https://github.com/turboderp/exllama/issues/81
+  generator.settings.top_k = 1 #1 #https://github.com/turboderp/exllama/issues/81
+  generator.settings.typical = 1.0 #https://github.com/turboderp/exllama/issues/81
+  
+  return(generator)
+
+
+
+
+# Produce a simple generation
+
+#prompt = "Once upon a time,"
+#print (prompt, end = "")
+#output = generator.generate_simple(prompt, max_new_tokens = 100)
+#print(output[len(prompt):])
+#[output]
+#generator.generate_simple_rex("USER: Print 5 pounds signs, e.g. '#####' ASSISTANT:", max_new_tokens = 10, custom_stop="#" ) #
+
+```
+
+# Initialize (only do once or OOM)
+
+```{python}
+
+import numpy as np
+generator=icbe_llm_generator()
+
+#452 seconds on average for 3090+4080.
+benchmark=False
+from datetime import datetime
+times=[]
+if benchmark:
+  for i in range(5):
+    #generator.gen_begin('') #resets the cache don't have it working apparently #https://github.com/turboderp/exllama/discussions/155
+    start_time = datetime.now()
+    output_benchmark =  generator.generate_simple("### User: List the first 1000 things that come to mind.\n### ASSISTANT:", max_new_tokens = 4000  ) 
+    end_time = datetime.now()
+    times.append(end_time-start_time)
+
+#pip install pyread
+import pyreadr
+crisis_narratives = pyreadr.read_r("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.Rds").popitem()[1]
+print(crisis_narratives.keys())
+
+#Load the story once for the whole thing
+story=crisis_narratives.text[crisno-1] #remember 0 indexing
+
+```
+
+## Verify OOMm side
+
+Looks like our limit is actually close to 2450. That's interesting. It's because I changed the max tokens window. It actually gave me less memory.
+Ok 2800 gets me 2801
+2900 gets me 2850 but not 2875
+
+```{r}
+
+library(tidyverse)
+prompt=rep("\n",2850) %>% paste0(collapse='') #ok so \n is a single unicode character plus a stop character. Lots of others were weird. 
+n_tokens=py$generator$tokenizer$encode(prompt)$shape[1]
+print(n_tokens)
+output =  py$generator$generate_simple_rex( prompt , max_new_tokens = as.integer(1) , custom_stop= '\n'  ) #
+
+max_tokens=2800
+
+```
+
+
+# Begin Weak Supervision
+
+## Train/Valid/Test Splits
+
+```{r}
+
+library(tidyverse)
+library(stringi)
+library(glue)
+
+#New plan we're going to filter to only expert codings.
+#Dead sentences have no actors listed in the wide, just use that.
+events_agreed_long <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed_long.Rds")
+events_agreed_long_filtered_experts_atleast2 <-  events_agreed_long %>% filter(sentence_span_text %>% str_detect("\\.$"))  %>% filter(expert==1) %>% #Removes 626 degenerate sentence 
+                                                 group_by(crisno, sentence_number_int_aligned, sentence_span_text, #event_number_int
+                                                 varname_normalized, value_normalized) %>%
+                                                  filter(n()>=2) %>% #The idea here is that if 2 or more experts listed a country as actor_a then we're going to count it. 
+                                                   #even if they were talking about different events
+                                                 ungroup()
+
+
+
+temp <- events_agreed_long_filtered_experts_atleast2 %>%
+               mutate(do_actor_a= ifelse(varname_normalized %in% c('do_actor_a'), value_normalized, NA)) %>%
+               mutate(do_actor_b= ifelse(varname_normalized %in% c('do_actor_b'), value_normalized, NA)) %>%
+               mutate(say_actor_a= ifelse(varname_normalized %in% c('say_actor_a'), value_normalized, NA)) %>%
+               mutate(say_actor_b= ifelse(varname_normalized %in% c('say_actor_b'), value_normalized, NA)) %>%
+               mutate(think_actor_a= ifelse(varname_normalized %in% c('think_actor_a'), value_normalized, NA)) %>%
+               group_by(crisno, sentence_number_int_aligned, sentence_span_text, event_number_int) %>%
+               fill(do_actor_a,do_actor_b,say_actor_a,say_actor_b,think_actor_a, .direction ="updown") %>%
+               group_by(crisno, sentence_number_int_aligned, sentence_span_text , do_actor_a, do_actor_b, say_actor_a, say_actor_b, think_actor_a, varname_normalized) %>%
+               summarise(value_normalized = value_normalized %>% unique() %>% sort() %>% paste(collapse=";")) 
+  
+               
+events_agreed_long_filtered_experts_atleast2_wide <-   temp %>%
+  filter(!varname_normalized %in% c('crisno','sentence_number_int_aligned','sentence_span_text','think_actor_a','say_actor_a','say_actor_b','do_actor_a','do_actor_b',
+                                    'crisis', 'icb_survey_version', 'section', 'sentencenumber')) %>%
+  pivot_wider( id_cols=c(crisno, sentence_number_int_aligned, sentence_span_text , think_actor_a, say_actor_a, say_actor_b, do_actor_a, do_actor_b  ) ,
+               names_from=varname_normalized,
+               values_from=value_normalized)
+
+dim(events_agreed_long_filtered_experts_atleast2_wide) #21660    74
+
+temp <- events_agreed_long_filtered_experts_atleast2_wide %>% mutate_all(as.character) %>% mutate_all(trimws) %>% as.matrix()
+temp[temp==""]=NA
+events_agreed_long_filtered_experts_atleast2_wide$count_filled_fields <-  rowSums(!is.na(temp))
+
+events_agreed_long_filtered_experts_atleast2_wide_topevent <- events_agreed_long_filtered_experts_atleast2_wide %>%
+  arrange(crisno, sentence_number_int_aligned, sentence_span_text , desc(count_filled_fields)) %>%
+  group_by(crisno, sentence_number_int_aligned, sentence_span_text ) %>%
+  filter(row_number()==1)
+
+#events_agreed_long_filtered_experts_atleast2 %>% count(varname_normalized) %>%
+#  filter(varname_normalized %>% str_detect('actor'))
+
+#This already collapses codings to specific events.
+#Every unique set of actors got an event. 
+#events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+#events_agreed_wide_filtered <- events_agreed_wide %>% filter(sentence_span_text %>% str_detect("\\.$")) #Removes 626 degenerate sentence 
+
+#To minimize code rewrites we just rename it to the older filtered name, but know that it's the highly filtered, 2 experts, 1 event per, with the most agreed fields.
+events_agreed_wide_filtered <- events_agreed_long_filtered_experts_atleast2_wide_topevent
+
+#Ok new plan, we're going to keep at most one of each type, so one thought, one speech, one action, and a sentence can have each.
+
+#We're going to also only take 1 event per sentence. The one with the most details tends to be the one with the most agreement.
+temp <- events_agreed_wide_filtered %>% mutate_all(as.character) %>% mutate_all(trimws) %>% as.matrix()
+temp[temp==""]=NA
+events_agreed_wide_filtered$count_filled_fields <-  rowSums(!is.na(temp))
+events_agreed_wide_filtered <- events_agreed_wide_filtered %>%
+                               mutate_if(is.character, list(~na_if(.,""))) %>% #make sure you replace empty quots with NAs or it'll break everything
+                               mutate(event_type_thought = !is.na(think_actor_a) ) %>%
+                               mutate(event_type_say = !is.na(say_actor_a) | !is.na(say_actor_b) ) %>%
+                               mutate(event_type_do = !is.na(say_actor_a) | !is.na(say_actor_b) ) %>%
+                               mutate(event_type_do_act = !is.na(do_actor_a) & is.na(do_actor_b) ) %>%
+                               mutate(event_type_do_interact = !is.na(do_actor_a) & !is.na(do_actor_b) ) %>%
+                               mutate(event_type_new = case_when( 
+                                        event_type %>% is.na() ~ "no event",
+                                        event_type_thought  ~ "thought",
+                                        event_type_say  ~ "communication",
+                                        event_type_do_act   ~ "action",
+                                        event_type_do_interact ~ "interaction",
+  
+                                        #event_type_say & event_type_do_act ~ "communication about an action",
+                                        #event_type_say & event_type_do_interact ~ "communication about an interactionaction",
+  
+                                        #event_type_thought & event_type_do_act ~ "thought about an action",
+                                        #event_type_thought & event_type_do_interact ~ "thought about interaction",
+                                        #event_type_thought & event_type_say ~ "thought about a communication",
+                                        #event_type_thought & event_type_say & event_type_do_act  ~ "thought about a communication about an action",
+                                        #event_type_thought & event_type_say & event_type_do_act  ~ "thought about a communication about an interaction"
+                                 )
+                                ) %>%
+                               mutate(event_type_yesno = ifelse(is.na(event_type), "does not have an event","has an event" )) %>% 
+                               arrange(count_filled_fields %>% desc()) %>% 
+                               #group_by(crisno, sentence_number_int_aligned,event_type_new) %>%  #keeping one of each type
+                               # filter(row_number()==1) %>% 
+                               group_by(crisno, sentence_number_int_aligned) %>%  #Now just keeping only one per, whichever had the most details
+                                 filter(row_number()==1) %>% 
+                               ungroup() %>%
+                               group_by(crisno, sentence_number_int_aligned) %>%
+                                   mutate(
+                                     sentence_type_includes_thought = max(event_type_thought),
+                                     sentence_type_includes_say = max(event_type_say),
+                                     sentence_type_includes_do = max(event_type_do),
+                                     sentence_type_includes_do_act = max(event_type_do_act),
+                                     sentence_type_includes_do_interact = max(event_type_do_interact),                                     
+                                   ) %>%
+                               ungroup() %>% 
+                                mutate(do_leaf=coalesce(interact_increasecoop, interact_decreasecoop, interact_deescalate, interact_escalate,
+                                      act_escalate, act_deescalate, act_cooperative, act_uncooperative)) #%>% #this fails because '' are being treated as values
+                               #not doing because it should be very sparse now
+                               #mutate_all(replace_na, 'none'  ) #have to do this last because the codings above depend on NAs to exist
+
+#Some cleaning
+#Need to recode event type based on what actors are listed
+events_agreed_wide_filtered <- events_agreed_wide_filtered 
+
+events_agreed_wide_filtered %>% count(event_type_new)
+
+#Take 80% for training
+#10% for validation
+#10% for test
+
+icbe_crises    <-  events_agreed_wide_filtered %>% count(crisno) 
+nrow(icbe_crises) #475
+train_icbe_crises <- icbe_crises %>% arrange(crisno) %>% filter(row_number()<=375) %>% pull(crisno)
+valid_icbe_crises <- icbe_crises %>% arrange(crisno) %>% filter(row_number()>375 & row_number()<=425 ) %>% pull(crisno)
+test_icbe_crises <- icbe_crises %>% arrange(crisno) %>% filter(row_number()>425) %>% pull(crisno)
+#verify no overlap
+
+set.seed(1)
+train_events_agreed_wide_filtered <- events_agreed_wide_filtered %>% filter(crisno %in% train_icbe_crises) #8475    71
+valid_events_agreed_wide_filtered <- events_agreed_wide_filtered %>% filter(crisno %in% valid_icbe_crises) %>%
+                                     group_by(event_type) %>%
+                                        slice_sample(n=50) %>%
+                                        #filter(row_number()<50) %>% 
+                                      ungroup() #1598   71 #For testing purposes limiting to the first 100
+test_events_agreed_wide_filtered <- events_agreed_wide_filtered %>% filter(crisno %in% test_icbe_crises)  # %>% filter(row_number()<2) #2058   71
+
+#library(textreuse) #install.packages('textreuse')
+#minhash <- minhash_generator(n = 240, seed = 3552)
+#head(minhash(c("turn tokens into", "tokens into hashes", "into hashes fast")))
+
+events_agreed_wide_filtered %>% write_csv("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/events_agreed_wide_filtered.csv")
+events_agreed_wide_filtered %>% dplyr::select(sentence_span_text, starts_with("do_"), starts_with("interact_"), starts_with("act_"))
+
+train_events_agreed_wide_filtered %>% saveRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/train_events_agreed_wide_filtered.Rds")
+valid_events_agreed_wide_filtered %>% saveRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/valid_events_agreed_wide_filtered.Rds")
+test_events_agreed_wide_filtered  %>% saveRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/test_events_agreed_wide_filtered.Rds")
+
+
+```
+
+# Working Functions
+
+## Function: Assemble Existing Answers
+
+This dumps two datasets of wide predictions to global
+valid_predictions_wider
+test_predictions_wider
+
+```{r}
+
+coalesce_vars <- c('interact_increasecoop','interact_decreasecoop','interact_deescalate','interact_escalate','act_escalate','act_deescalate','act_cooperative','act_uncooperative')
+
+regenerate_predictions_wide <- function(){
+    
+  valid_blank <- valid_events_agreed_wide_filtered %>% 
+                 dplyr::select(crisno,  sentence_number_int_aligned, sentence_span_text ) %>% #crisis_text
+                 arrange(crisno, sentence_number_int_aligned)
+  
+  path_validation_predictions <- "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/predictions_long_validation/"
+  files_validation_predictions <- path_validation_predictions %>% list.files(pattern = NULL, all.files = FALSE,full.names = TRUE)
+  valid_predictions_long <- files_validation_predictions %>% lapply(function(x) read_csv(x,col_types=rep('c',100) %>% paste0(collapse='') )) %>% bind_rows() 
+  
+  if(nrow(valid_predictions_long)==0){
+    valid_predictions_wider <<- valid_blank
+  } else {
+    valid_predictions_wider <<- valid_blank %>% left_join( valid_predictions_long %>% dplyr::select(-starts_with('prompt'))  %>%
+                                pivot_wider(
+                                  names_from = variable,
+                                  values_from = value#,
+                                  #values_fn = paste0(sep=";", collapse=";")
+                                ) %>% rename(sentence_span_text=sentence)  ) %>% mutate_all(as.character) %>% mutate_all(trimws) %>% distinct()
+    if(length(setdiff(coalesce_vars, names(valid_predictions_wider)))==0  ){
+        valid_predictions_wider <<- valid_predictions_wider %>% 
+                                    mutate(do_leaf=coalesce(
+                                      #!!! rlang::syms(uCols))
+                                          interact_increasecoop, interact_decreasecoop, interact_deescalate, interact_escalate,
+                                          act_escalate, act_deescalate, act_cooperative, act_uncooperative
+                                    ))  
+      }
+  }
+  test_blank  <- test_events_agreed_wide_filtered %>% 
+                 dplyr::select(crisno,  sentence_number_int_aligned, sentence_span_text ) %>% #crisis_text
+                 arrange(crisno, sentence_number_int_aligned)
+  
+  path_test_predictions <- "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/predictions_long_test/"
+  files_test_predictions <- path_test_predictions %>% list.files(pattern = NULL, all.files = FALSE,full.names = TRUE)
+  test_predictions_long <- files_test_predictions %>% lapply(function(x) read_csv(x,col_types=rep('c',100) %>% paste0(collapse='') )) %>% bind_rows() 
+
+  if(nrow(test_predictions_long)==0){
+    test_predictions_wider <<- test_blank
+  } else {
+    test_predictions_wider <<- test_blank %>% left_join( test_predictions_long %>% dplyr::select(-starts_with('prompt')) %>% 
+                              pivot_wider(
+                                names_from = variable,
+                                values_from = value#,
+                                #values_fn = paste0(sep=";", collapse=";")
+                              ) %>% rename(sentence_span_text=sentence)  ) %>% mutate_all(as.character) %>% mutate_all(trimws) %>% distinct()
+  
+    if(length(setdiff(coalesce_vars, names(test_predictions_wider)))==0  ){
+      test_predictions_wider <<- test_predictions_wider %>%  mutate(do_leaf=coalesce(interact_increasecoop, interact_decreasecoop, interact_deescalate, interact_escalate,
+                                  act_escalate, act_deescalate, act_cooperative, act_uncooperative))  
+    }
+  }
+
+}
+
+```
+
+
+## Function: Code a Question
+
+Takes in a vector of variables and sentences to code and returns a data frame with the predicted values
+
+```{r}
+
+crisis_narratives <-  readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/crises_narratives_rex_2023_webscrape.Rds")
+
+main_path = "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/predictions_long_validation/"
+#main_path = "/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_out/predictions_long_test/"
+
+library(stringdist) #install.packages('stringdist')
+#stringdist(a, b, method='lv')
+
+#install.packages("progress")
+library(progress) #https://github.com/r-lib/progress
+#variables=c('event_type_yesno')
+#sentences <- valid_events_agreed_wide_filtered$sentence_span_text[1:10]
+sentences=NULL #some package is loading an object
+classify_many_sentences <- function(
+                                    variables, 
+                                    #sentences, #we don't pass this in anymore
+                                    verbose=FALSE,
+                                    group_size_max=40,  #Pick the largest you can get away with without an OOM
+                                    fileout=NULL,
+                                    stratify_variables=NULL,
+                                    keep_variables=NULL,
+                                    training_constraints ="TRUE",
+                                    predicting_constraints="TRUE",
+                                    preamble=NULL,
+                                    include_crisis=T
+                                    ){
+  if(is.null(stratify_variables)){stratify_variables=variables}
+  if(is.null(keep_variables)){keep_variables=variables}
+  if(is.null(fileout)){
+    fileout = paste0(main_path,keep_variables,".csv")
+  } 
+  if(fileout %>% file.exists()){
+    return(fileout %>% read_csv( na = c("") )) #We now have a notion of NA meaning observed missing so only load quotes as true na
+  } 
+  
+  #Grab sentences to code
+  regenerate_predictions_wide() #regenerate the data we have
+  condition_vars=setdiff(variables,keep_variables)
+  #I think we only change this sentence and the directory path at the end to switch it to test
+  sentences_df <- valid_predictions_wider %>% filter( !! rlang::parse_expr(predicting_constraints) ) %>% dplyr::select(crisno,sentence_span_text, one_of(condition_vars))
+  #sentences_df <- test_predictions_wider %>% filter( !! rlang::parse_expr(predicting_constraints) ) %>% dplyr::select(crisno,sentence_span_text, one_of(condition_vars))
+
+  #Subset training data
+  train_xy <- train_events_agreed_wide_filtered  %>% 
+              filter( !! rlang::parse_expr(training_constraints) ) %>%  #https://www.r-bloggers.com/2020/09/using-dplyrfilter-when-the-condition-is-a-string/
+              dplyr::select(crisno, sentence_number_int_aligned, sentence_span_text, one_of(variables, stratify_variables)) %>%
+              unite("everything",one_of(c('sentence_span_text',variables)), sep="|", remove = FALSE, na.rm = FALSE) %>% 
+              unite("strata", one_of(stratify_variables), sep="|", remove = FALSE, na.rm = FALSE) %>%
+              mutate(strata_lumped = strata %>% fct_lump_n(20) )  #top 10 categories plus an other
+  #valid_xy <- valid_events_agreed_wide_filtered %>% dplyr::select(crisno, sentence_number_int_aligned, sentence_span_text, one_of(variables))
+  #test_xy <- test_events_agreed_wide_filtered %>% dplyr::select(crisno, sentence_number_int_aligned, sentence_span_text, one_of(variables))
+  
+  train_xy <- train_xy %>%
+              rowwise() %>%
+                mutate(n_tokens = py$generator$tokenizer$encode(everything)$shape[1]) %>%
+              ungroup()
+  
+  condition <- (!(train_xy[,variables] %>% as.matrix() %>% is.na())) %>% rowSums() %>% as.integer()
+  
+  #If we end up with too many categories, take only the most common and then recode the minor as "other"
+  category_counts <- train_xy %>%
+                     count(strata_lumped) 
+    
+  n_categories <- train_xy %>% 
+                  filter(condition>0) %>%
+                  #select(one_of(stratify_variables)) %>%
+                  select(strata_lumped) %>%
+                  distinct() %>%
+                  nrow()
+  
+  pb <- progress_bar$new(format = "predicting [:bar] :percent eta: :eta", total = nrow(sentences_df), clear = FALSE, width= 60)
+  pb$tick(0)
+  answer_df_list = list()
+  for(i in 1:nrow(sentences_df)  ){
+    pb$tick()
+    crisisno=sentences_df$crisno[i]
+    crisis_text = crisis_narratives %>% filter(crisno==crisisno) %>% pull(text) %>% str_replace_all("[\n\r]{1,}",'\n') %>% str_replace_all("\n {1,}\n",'\n') %>% str_split("References")
+    crisis_text = crisis_text[[1]][1] %>% trimws() 
+    #Take the first 500 tokens
+    crisis_text_tokens <- py$generator$tokenizer$encode(crisis_text)
+    n_crisis_text_tokens=crisis_text_tokens$shape[1]
+    crisis_token_budget=min(n_crisis_text_tokens,500)-1
+    crisis_text_short <- py$generator$tokenizer$decode( crisis_text_tokens[0][0:crisis_token_budget] )
+    sentence=sentences_df$sentence_span_text[i]
+    out_sentence = sentences_df %>% filter(row_number()==i) %>% dplyr::select(sentence_span_text,one_of(condition_vars)) %>% unite('out',sep="|") %>% pull(out)
+    n_token_sentence = py$generator$tokenizer$encode(sentence)$shape[1]
+    n_token_preamble = py$generator$tokenizer$encode(preamble)$shape[1]
+    token_budget = max_tokens - 75 - n_token_preamble - n_token_sentence - (crisis_token_budget*include_crisis) #adding a buffer
+    #Instead of groupsize, you get a token budget. That's something like 2700 - the prompt - 3 more per row
+    group_token_budget <- floor(token_budget/n_categories)
+    
+    #Different draws lead to different answers. That's not great.
+    train_sample <- train_xy %>% 
+                    filter(condition>0) %>%
+                    filter(sentence_span_text %>% nchar() < 190 ) %>% #reject very long example sentences
+                    mutate(sdists= sentence_span_text %>% tolower() %>% stringdist( sentence %>% tolower(), method='osa') ) %>% #cosine #lv
+                    mutate(random=runif(n())) %>%
+                    arrange(sdists ) %>% #sort by training strings with the smallest distance to the target string
+                    filter(!duplicated(sentence_span_text)) %>% #don't include multiple events from the same sentence in the training sample
+                    #When there are too many strata we can end up with less than 1 example for every group.
+                    #group_by(pick({{ stratify_variables }})) %>% #https://dplyr.tidyverse.org/reference/pick.html
+                    group_by( strata_lumped ) %>% #https://dplyr.tidyverse.org/reference/pick.html
+                        mutate(group_tokens=cumsum(n_tokens+4)) %>% #this assumption of 4 doesn't hold for long answers (it should now, added answers intot the token count)
+                        #filter(row_number()<=group_size) %>% #upping the n key
+                    ungroup() %>%
+                    group_by( strata_lumped ) %>% #https://dplyr.tidyverse.org/reference/pick.html
+                      filter(group_tokens<group_token_budget) %>% #upping the n key
+                    ungroup() %>%
+                    mutate(random=runif(n())) %>% #I don't know why but somehow it looks less random unless I regenerate this number
+                    arrange(random) %>%
+                    dplyr::select(sentence_span_text, one_of(variables)) %>% 
+                    mutate_all(trimws  ) %>% #treating NA as observed none
+                    mutate_all(list(~na_if(.,""))) %>%
+                    mutate_all(replace_na, 'none'  ) %>% 
+                    dplyr::select(sentence=sentence_span_text, one_of(variables)) %>%
+                    #one last token count and threshold
+                    unite("out", everything(), remove = FALSE, sep="|") %>%  
+                    rowwise() %>%
+                      mutate(n_tokens = py$generator$tokenizer$encode(out)$shape[1]) %>%
+                    ungroup() %>%
+                    mutate(n_tokens_cumsum=cumsum(n_tokens+2)) %>% #add one for the newline character
+                    filter(n_tokens_cumsum<token_budget)
+
+    dim(train_sample) #
+    
+    #train_sample_md <- train_sample %>% dplyr::select(sentence=sentence_span_text, one_of(variables)) %>% knitr::kable('pipe') %>% 
+    #  str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") # %>% writeLines()
+    #savess about 141 tokens
+    train_sample_md <- train_sample %>% pull(out) %>% paste(collapse="\n")
+    #nchar(train_sample_md)/4 #You can end up with a sample that's too long because of many too long sentences
+    if(include_crisis){
+      prompt= glue::glue({preamble},"\nBegin Examples\n", {train_sample_md},"\nEnd Examples\n\nBegin Crisis Narrative\n", {crisis_text_short}, "...\nEnd Crisis Narrative\n\nBegin Crisis Sentence to Code\n",  {out_sentence},"|")
+    } else {
+      prompt= glue::glue({preamble},"\nBegin Examples\n", {train_sample_md},"\n",  {out_sentence},"|")      
+    }
+    n_tokens=py$generator$tokenizer$encode(prompt)$shape[1]
+    #print(n_tokens)
+    if(n_tokens>max_tokens){
+      print(sentence)
+      stop("too many tokens")
+    }
+    output =  py$generator$generate_simple_rex( prompt , max_new_tokens = as.integer(100) , custom_stop= '\n'  ) #
+    response= output %>% str_replace(prompt %>% as.character() %>% fixed(),"") #the extra variables are built into the prompt and removed
+    response_clean <- (response %>% str_split(fixed("|")))[[1]][1:length(keep_variables)]  %>% trimws()
+    names(response_clean) <- keep_variables
+    temp_df= as.data.frame(response_clean %>% t())
+    temp_df$sentence <- sentence
+    temp_df$prompt <- prompt
+    answer_df_list[[sentence]] <- temp_df
+  }
+  final_df_long <- bind_rows(answer_df_list) %>%
+                   pivot_longer(-c(sentence,prompt), names_to = "variable", values_to = "value") %>%
+                   filter(variable %in% keep_variables)
+  
+  final_df_long %>% write_csv(fileout)
+  regenerate_predictions_wide() #one more time just so we're up to date
+  return(final_df_long)
+}
+
+
+```
+
+## Stratified Sample for CHATGPT
+
+```{r, eval=F}
+
+
+group_token_budget=4000
+train_sample <- train_xy %>% 
+                filter(sentence_span_text %>% nchar() < 190 ) %>% #reject very long example sentences
+                filter(!duplicated(sentence_span_text)) %>% #don't include multiple events from the same sentence in the training sample
+                group_by(pick({{ stratify_variables }})) %>% #https://dplyr.tidyverse.org/reference/pick.html
+                    mutate(group_tokens=cumsum(n_tokens+4)) %>% #this assumption of 4 doesn't hold for long answers
+                    #filter(row_number()<=group_size) %>% #upping the n key
+                ungroup() %>%
+                group_by(pick({{ stratify_variables }})) %>% #https://dplyr.tidyverse.org/reference/pick.html
+                  filter(group_tokens<group_token_budget) %>% #upping the n key
+                ungroup() %>%
+                mutate(random=runif(n())) %>% #I don't know why but somehow it looks less random unless I regenerate this number
+                arrange(random) %>%
+                dplyr::select(sentence_span_text, one_of(variables)) %>% 
+                mutate_all(trimws  ) %>% #treating NA as observed none
+                mutate_all(list(~na_if(.,""))) %>%
+                mutate_all(replace_na, 'none'  ) %>% 
+                dplyr::select(sentence=sentence_span_text, one_of(variables)) %>%
+                #one last token count and threshold
+                unite("out", everything(), remove = FALSE, sep="|") %>%  
+                rowwise() %>%
+                  mutate(n_tokens = py$generator$tokenizer$encode(out)$shape[1]) %>%
+                ungroup() %>%
+                mutate(n_tokens_cumsum=cumsum(n_tokens+1)) %>% #add one for the newline character
+                filter(n_tokens_cumsum<token_budget)
+
+dim(train_sample) #
+train_sample_md <- train_sample  %>% pull(out) %>% paste(collapse="\n")
+
+```
+
+# Event
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+does not have an event - Sentence is about background context, retrospective summary, or about explicit innaction by the actors. 
+has an event - Sentence is about a specific thought, speech, or action by an actor during the crisis. Describes a specific event that happened, with a specific actor and a specific behavior, communication, meeting, mental state, etc.
+End Codebook
+"
+
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('event_type_yesno'), #we pass in thought type and nothing else
+                                       stratify_variables=c('event_type_yesno'), #we stratify the training data based on thought types as well as no thought
+                                       keep_variables=c('event_type_yesno'), #and get back thought type and nothing else
+                                       training_constraints="!event_type_yesno %>% str_detect(';')", # , #we apply it to every sentence changed my mind, need alance on this
+                                       predicting_constraints="TRUE" #we code this for every sentence
+                                       )
+
+```
+
+
+# Thought
+
+## sentence_type_includes_thought
+
+We code this for all sentences
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+0) does not describe thoughts - only describes actions or communications with no information about an actor's thoughts or cognitives processes.
+1) describes thoughts - Sentence contains information about an actor's thoughts or cognitive processes like Alert (Start of crisis, End of crisis), Wishes (Desire, Fear), Evaluation (Victory, Defeat), Aims (Territory, Policy, Regime/government change, Preemption), or Awareness (Discover fact, Become convinced).
+End Codebook
+"
+
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('sentence_type_includes_thought'), #we pass in thought type and nothing else
+                                       stratify_variables=c('sentence_type_includes_thought'), #we stratify the training data based on thought types as well as no thought
+                                       keep_variables=c('sentence_type_includes_thought'), #and get back thought type and nothing else
+                                       training_constraints="TRUE", # "!thinkkind %>% str_detect(';')", #we apply it to every sentence changed my mind, need alance on this
+                                       predicting_constraints="TRUE" #we code this for every sentence
+                                       )
+
+```
+
+
+## thinkkind
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+start of a crisis - The actor perceived the start of a crisis or thought that a crisis had now begun.
+end of a crisis - The actor perceived the end of a crisis or thought that a crisis had now ended.
+desire - The actor wishes that something would occur.
+fear - The actor is concerned that something would occur.
+perception of victory - The actor perceived a victory in the crisis for their side.
+perception of defeat - The actor perceived a defeat in the crisis for their side.
+territorial aims - The actor had an interest about a territorial goal.
+policy aims - The actor had a thought about a policy it hopes is carried out or not carried out.
+regime change aims - The actor had an interest in another country’s government changing.
+preemption aims - The actor had an interest in taking action before another actor takes action. 
+discovered fact - The actor was made aware of something happening in the world.
+became convinced - The actor confirmed that something was or was not true.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('thinkkind'), 
+                                       stratify_variables=c('thinkkind'),
+                                       keep_variables=c('thinkkind'),
+                                       training_constraints="!is.na(thinkkind) & thinkkind!='' & (!thinkkind %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_thought %>% str_detect('^1')" #require a 1 here
+                                       )
+
+```
+
+
+
+
+## think_actor_a
+
+```{r, eval=T}
+
+preamble="You are a text extractor that identifies the relevant actor in a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+thought actor - Which actor is having a cognition in this event? Choose the actor that is engaging in a cognitive event or thought process. If a representative of a country is named, choose the country that is being represented.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('thinkkind', 'think_actor_a'), 
+                                       stratify_variables=c('thinkkind'),
+                                       keep_variables=c('think_actor_a'),
+                                       training_constraints="sentence_type_includes_thought==1 & (!thinkkind %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_thought %>% str_detect('^1')"
+                                       )
+
+```
+
+# Say 
+
+## sentence_type_includes_say
+
+```{r, eval=T}
+
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis. Sentences that end in an '|' symbol are to be coded, and other sentences are to be used as background context.
+
+Begin Codebook
+0) does not describe a communication - only describes actions or thoughts with no information about a communication from an actor.
+1) describes a communication - Sentence contains information about an actor's communication like an ultimatum, an offer with conditions,  an offer without conditions,  an expression of intent, an expression of threat, an expression of promise, an expression of demand, an expression of appeal or request, an expression of accusation, an expression of rejection, an expression of acceptance, an expression of disapproval or condemnation, or an expression of praise.
+End Codebook
+"
+
+preamble_experiment=''
+
+#https://chat.openai.com/share/431c2168-8d79-483a-8233-38fa6fce89cd
+preamble=r"(You are working as a text classifier that determines whether a given sentence, extracted from a narrative about an international crisis, involves an actor's communication or not. The sentence could be detailing events, decisions, threats, promises, or any other form of communication between parties. Using the codebook provided, your task is to label each sentence accordingly.
+
+CODEBOOK
+
+0) No Communication Description
+
+Sentence merely describes events, actions, or thoughts without indicating any form of communication or conveyance of intent from an entity or actor.
+1) Communication Description
+
+Sentence specifies any form of actor's communication. This could include but is not limited to:
+Issuing an ultimatum
+Making an offer (with or without conditions)
+Expressing an intent, threat, promise, or demand
+Making an appeal, request, or accusation
+Declaring acceptance or rejection
+Expressing disapproval, condemnation, or praise.
+
+Begin Guidance
+Actor & Information Flow: Look for indicators that show an actor conveying information, decisions, or intentions to another actor or group. Such indicators can include verbs like "warned", "stated", "responded", "declared", "issued", and similar communication-oriented actions.
+
+Action vs. Intent: Be mindful of the difference between a description of an event and the communication about a potential event. For instance, "troops were deployed" describes an action, whereas "warned of deploying troops" suggests communication about a potential action.
+
+Implicit Communication: Sometimes, the communication might not be direct. Sentences that hint at indirect communications, like "sent a message", "signaled", or "in response to", often fall into the communication description.
+
+Avoid Overfitting: Do not overly rely on specific words or phrasing found in the example sentences. Focus on the broader context and meaning of the sentence rather than matching exact terms.
+
+Multiple Elements: Some sentences may contain both communication and action descriptions. In such cases, prioritize the presence of communication elements when assigning a label.
+
+Descriptive vs. Communicative Phrases: Sentences that merely set the scene, describe the aftermath, or provide context are not communications. For instance, descriptions of battle outcomes, troop movements without conveyed intent, or historical settings typically don't involve inter-actor communication.
+End Guidance
+
+Actor & Information Flow: Look for indicators that show an actor conveying information, decisions, or intentions to another actor or group. Such indicators can include verbs like "warned", "stated", "responded", "declared", "issued", and similar communication-oriented actions.
+
+Action vs. Intent: Be mindful of the difference between a description of an event and the communication about a potential event. For instance, "troops were deployed" describes an action, whereas "warned of deploying troops" suggests communication about a potential action.
+
+Implicit Communication: Sometimes, the communication might not be direct. Sentences that hint at indirect communications, like "sent a message", "signaled", or "in response to", often fall into the communication description.
+
+Avoid Overfitting: Do not overly rely on specific words or phrasing found in the example sentences. Focus on the broader context and meaning of the sentence rather than matching exact terms.
+
+Multiple Elements: Some sentences may contain both communication and action descriptions. In such cases, prioritize the presence of communication elements when assigning a label.
+
+Descriptive vs. Communicative Phrases: Sentences that merely set the scene, describe the aftermath, or provide context are not communications. For instance, descriptions of battle outcomes, troop movements without conveyed intent, or historical settings typically don't involve inter-actor communication.
+End Guidance
+
+)"
+
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('sentence_type_includes_say'), 
+                                       stratify_variables=c('sentence_type_includes_say'),
+                                       keep_variables=c('sentence_type_includes_say'),
+                                       training_constraints="TRUE", # "!thinkkind %>% str_detect(';')", #we apply it to every sentence changed my mind, need alance on this
+                                       predicting_constraints="TRUE" #we code this for every sentence
+                                       )
+
+
+
+
+```
+
+
+## sayintkind
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+ultimatum - The actor will take an action unless the recipient fulfills a certain condition.
+offer - The actor will take an action if the recipient fulfills a certain condition. This not include actually fulfilling the condition, simply communicating that a condition can be fulfilled.
+offer without conditions - The actor makes an offer to do or give something in the future regardless of the recipient’s actions.
+express intent - The actor makes a claim about a desire to take action in the future. The goal is to communicate something that may happen in the future.
+threaten - The actor makes a claim they will take an undesired action in the future. The intent of the threat is to convince another actor to change their planned course of action.
+an expression of promise - The actor makes a claim they will take a desired action in the future. This is distinct from a formally signed agreement that represents an interaction between two actors.
+demand - Making a statement that requires another actor do something.
+appeal / request - Making a statement that asks another actor for something. This includes positive requests like asking for aid or negative requests like withdrawing troops.
+accuse - Making a claim that another actor did something in the past.
+reject - Indication of a refusal to comply with a previously made statement. This merely represents a statement or speech act, not formally leaving an actual agreement.
+accept - Indication of a willingness to comply with a previously made statement.
+disapproval  - Expressing a negative reaction to a past event. 
+praise - Expressing a positive reaction to a past event. 
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('sayintkind'), 
+                                       stratify_variables=c('sayintkind'),
+                                       keep_variables=c('sayintkind'),
+                                       training_constraints="!is.na(sayintkind) & sayintkind!='' & (!sayintkind %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_say %>% str_detect('^1')",
+                                       include_crisis=T
+                                       )
+
+```
+
+
+## say_actor_a
+
+```{r, eval=T}
+
+preamble="You are a text extractor that identifies the relevant actor in a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+say actor - What actor was speaking? Choose the actor that is engaging in a speech event or thought process. If a representative of a country is named, choose the country that is being represented.
+End Codebook
+"
+
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('sayintkind','say_actor_a'), 
+                                       stratify_variables=c('sayintkind'),
+                                       keep_variables=c('say_actor_a'),
+                                       training_constraints="!is.na(sayintkind) & sayintkind!='' & (!sayintkind %>% str_detect(';') )", #is a say and only one
+                                       predicting_constraints="sentence_type_includes_say %>% str_detect('^1')",
+                                       include_crisis=T
+                                       )
+
+```
+
+## say_actor_b
+
+```{r, eval=T}
+
+
+
+preamble="You are a text extractor that identifies the relevant actor in a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+say audience - What actor was the audience of the speech act? Choose the actor that is engaging in a speech event or thought process. If a representative of a country is named, choose the country that is being represented.
+End Codebook
+"
+
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('sayintkind','say_actor_a','say_actor_b'), 
+                                       stratify_variables=c('sayintkind'),
+                                       keep_variables=c('say_actor_b'),
+                                       training_constraints="!is.na(sayintkind) & sayintkind!='' & (!sayintkind %>% str_detect(';') )", #is a say and only one
+                                       predicting_constraints="sentence_type_includes_say %>% str_detect('^1')",
+                                       include_crisis=T
+                                       )
+
+```
+
+
+
+# Do
+
+## sentence_type_includes_do
+
+Although clashes erupted in January and
+
+```{r, eval=T}
+
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+0) does not describe an action - only describes communications or thoughts with no information about a unilateral internal action by an actor.
+1) describes an action - Sentence contains information about an actor's actions like an leadership change, coup, assassination, institutions change, protest or end protest, strike or end strike, riot or end riot, restrict rights or provide rights, terrorism or reduce terrorism, human rights violation or reduce human rights violation, mass killing or reduce mass killing, evacuate, battle, war, invasion, etc.
+End Codebook
+"
+
+valid_event <- classify_many_sentences(
+                                     preamble=preamble,
+                                     variables=c('sentence_type_includes_do'), 
+                                     stratify_variables=c('sentence_type_includes_do'),
+                                     keep_variables=c('sentence_type_includes_do'),
+                                     training_constraints="TRUE",
+                                     predicting_constraints="TRUE" #
+                                     )
+
+
+                                       
+```
+
+
+## sentence_type_includes_do_act
+
+```{r, eval=T}
+
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+0) does not describe a unilateral action - only describes interactions, communications, or thoughts with no information about a unilateral internal action by an actor.
+1) describes a unilateral action - Sentence contains information about an actor's unilateral actions like an leadership change, coup, assassination, institutions change, protest or end protest, strike or end strike, riot or end riot, restrict rights or provide rights, terrorism or reduce terrorism, human rights violation or reduce human rights violation, mass killing or reduce mass killing, or evacuate.
+End Codebook
+"
+
+valid_event <- classify_many_sentences(
+                                     preamble=preamble,
+                                     variables=c('sentence_type_includes_do_act'), 
+                                     stratify_variables=c('sentence_type_includes_do_act'), #some are actions and some aren't
+                                     keep_variables=c('sentence_type_includes_do_act'),
+                                     training_constraints="sentence_type_includes_do %>% str_detect('^1')", #only dos
+                                     predicting_constraints="sentence_type_includes_do %>% str_detect('^1')"
+                                     )
+
+```
+
+
+## sentence_type_includes_do_interact
+
+```{r, eval=T}
+
+
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+0) does not describe an international action - only describes communications, thoughts, or domestic actions with no information about an international action by an actor.
+1) describes an international interaction - Sentence contains information about an actor's international interaction like discussion, meeting, mediation, natural conclusion of diplomacy, sign formal agreement,  settle dispute , join war on behalf of, formal military ally, mutual defense pact, economic cooperation, military cooperation, intelligence cooperation, unspecified cooperation, general political support, economic aid, humanitarian aid, military aid, unspecified aid, inspections, release captives, cede territory, allow access, etc.
+End Codebook
+"
+
+valid_event <- classify_many_sentences(
+                                     preamble=preamble,
+                                     variables=c('sentence_type_includes_do_interact'), 
+                                     stratify_variables=c('sentence_type_includes_do_interact'), #some are actions and some aren't
+                                     keep_variables=c('sentence_type_includes_do_interact'),
+                                     training_constraints="sentence_type_includes_do %>% str_detect('^1')", #only dos
+                                     predicting_constraints="sentence_type_includes_do %>% str_detect('^1')"
+                                     )
+
+```
+
+
+
+
+## Act
+
+
+## do_kind
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+cooperative - unhelpful or aggresive actions by unarmed actors
+uncooperative - helpful or peaceful actions by unarmed actors
+escalatory - unhelpful or aggresive actions by armed actors
+deescalatory - helpful or peaceful actions by armed actors
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('do_kind'), 
+                                       stratify_variables=c('do_kind'),
+                                       keep_variables=c('do_kind'),
+                                       training_constraints="!is.na(do_kind) & do_kind!='' & (!do_kind %>% str_detect(';') )", #only train on classified do types
+                                       predicting_constraints="sentence_type_includes_do_act %>% str_detect('^1')" #only predicting sentences with an act
+                                       )
+
+```
+
+### act_uncooperative
+
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+coup - An attempt was made to overthrow the current regime and/or its leaders.
+assassination - An attempt was made to murder the current regime leader.
+protest - Act of organized public dissent.
+strike - Protest that takes the form of refusing to work.
+riot - Organized group violence.
+restrict rights - The actor took away or challenged the rights of another group of people. This could include the passage of restrictive laws or suspension of previously allowed rights. Organized groups rioting against the government should be coded here.
+terrorism - The actor engaged in the indiscriminate killing of civilians to incite fear and achieve a political goal.
+human rights violation - The actor violated the basic human rights of a group of people.
+mass killing - Intentional and indiscriminate murder by the government of a group of civilians. This is distinct from accusations of genocide since the actor has to be the one committing the genocide, not the one being accused.
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('act_uncooperative'), 
+                                       stratify_variables=c('act_uncooperative'),
+                                       keep_variables=c('act_uncooperative'),
+                                       training_constraints="!is.na(act_uncooperative) & act_uncooperative!='' & (!act_uncooperative %>% str_detect(';') )",
+                                       predicting_constraints="TRUE" #"do_kind %>% str_detect('^uncooperative')" #only predicting sentences with an act
+                                       )
+
+```
+
+### act_cooperative
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+leadership change - Election, resignation, or appointment. An election or other peaceful transition in top executive leadership of the country. This does not include a change in lower level leadership like ambassadors or diplomats.
+institutions change - Peaceful regime change from one kind of government to another. This involves a change in the entire regime as opposed to just the top leadership and does not include protests or demands for secession.
+end protest - Ended an act of organized public dissent.
+end strike - Ended a protest that took the form of refusing to work. 
+end riot - Ended organized group violence. 
+provide rights - The government increased the provision of rights to their citizens through things like expanded political or civil rights. 
+reduce terrorism - The actor reduced indiscriminate attacks on civilians designed to incite fear.
+reduce human rights violation - The actor reduced violations of another actor’s basic human rights.
+reduce mass killing - The actor reduced indiscriminate killing of another group’s population.
+evacuate -The actor withdrew civilians.
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('act_cooperative'), 
+                                       stratify_variables=c('act_cooperative'),
+                                       keep_variables=c('act_cooperative'),
+                                       training_constraints="!is.na(act_cooperative) & act_cooperative!='' & (!act_cooperative %>% str_detect(';') )",
+                                       predicting_constraints="do_kind %>% str_detect('^cooperative')" #only predicting sentences with an act
+                                       )
+
+```
+
+### act_deescalate
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+lower alert - The actor signaled a crisis or conflict was now less likely.
+de-mobilization - The actor halted or undid preparation of military forces for conflict.
+remove fortify - The actor weakened their military forces or took down defenses.
+end exercise - The actor ceased military training or practice. 
+end weapons test - The actor ceased testing weaponry. 
+withdraw from area - Troops were taken out of an area.
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('act_deescalate'), 
+                                       stratify_variables=c('act_deescalate'),
+                                       keep_variables=c('act_deescalate'),
+                                       training_constraints="!is.na(act_deescalate) & act_deescalate!='' & (!act_deescalate %>% str_detect(';') )",
+                                       predicting_constraints="do_kind %>% str_detect('^deescalatory')" #only predicting sentences with an act
+                                       )
+
+```
+
+
+### act_escalate
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+raise in alert - The actor increased the state of readiness of its armed forces. This occurred as part of an interaction with another actor.
+mobilization - The actor prepared military forces for conflict. This occurred as part of an interaction with another actor.
+fortify - The actor strengthened or built up their military forces. This occurred as part of an interaction with another actor.
+exercise - The actor engaged in military training or practice. This occurred as part of an interaction with another actor.
+weapons test - The actor engaged in testing weaponry to determine weapon effectiveness. This occurred as part of an interaction with another actor.
+deployment to area - Troops were moved one location to another. This does not involve actual direct combat since that would be an interaction, not a unilateral action.
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('act_escalate'), 
+                                       stratify_variables=c('act_escalate'),
+                                       keep_variables=c('act_escalate'),
+                                       training_constraints="!is.na(act_escalate) & act_escalate!='' & (!act_escalate %>% str_detect(';') )",
+                                       predicting_constraints="do_kind %>% str_detect('^escalatory')" #only predicting sentences with an act
+                                       )
+
+```
+
+## Interact
+
+
+## do_interact_kind
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+cooperative - unhelpful or aggresive actions by unarmed actors
+uncooperative - helpful or peaceful actions by unarmed actors
+escalatory - unhelpful or aggresive actions by armed actors
+deescalatory - helpful or peaceful actions by armed actors
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('do_interact_kind'), 
+                                       stratify_variables=c('do_interact_kind'),
+                                       keep_variables=c('do_interact_kind'),
+                                       training_constraints="!is.na(do_interact_kind) & do_interact_kind!='' & (!do_interact_kind %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_do_interact %>% str_detect('^1')",
+                                       )
+
+```
+
+### interact_escalate
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+raise in alert - The actor increased the state of readiness of its armed forces. This occurred as part of an interaction with another actor.
+mobilization - The actor prepared military forces for conflict. This occurred as part of an interaction with another actor.
+fortify - The actor strengthened or built up their military forces. This occurred as part of an interaction with another actor.
+exercise - The actor engaged in military training or practice. This occurred as part of an interaction with another actor.
+weapons test - The actor engaged in testing weaponry to determine weapon effectiveness. This occurred as part of an interaction with another actor.
+deployment to area - Troops were moved one location to another. This does not involve actual direct combat since that would be an interaction, not a unilateral action.
+show of force - The actor demonstrated its military capacity as warning or to intimidate. This occurred as part of an interaction with another actor.
+blockade - The actor restricted the target’s movement, mobility, or access outside of direct combat. This occurred as part of an interaction with another actor.
+border violation - The actor threatened the target’s territorial sovereignty or control. This occurred as part of an interaction with another actor.
+no fly zone - The actor restricted the target’s movement, mobility, or access in the air outside of direct combat. This occurred as part of an interaction with another actor.
+battle/clash - The actor engaged in conflict with the target. This occurred as part of an interaction with another actor.
+attack - The actor initiated conflict with the target. This occurred as part of an interaction with another actor.
+invasion/occupation - The actor entered with the intention of taking over some area of the target's territory. This is distinct from a speech act declaring an intent or desire to invade and instead only includes the actual invasion itself.
+bombard - The actor bombed the target. This occurred as part of an interaction with another actor.
+declaration of war - The actor declared war against its target for the first time. This occurred as part of an interaction with another actor.
+join ongoing war - The actor joined an ongoing war between other parties. The ‘receiver’ in this instance is the enemy/opponents of the actor.
+continuation of previous fighting - Fighting picked back up or re-emerged. This occurred as part of an interaction with another actor.
+assert political control over - The actor reasserted control over a territory where it previously had strong control (ie a colonial power). This occurred as part of an interaction with another actor.
+annex - The actor annexed a portion of its territory by giving up its claim of sovereignty. This occurred as part of an interaction with another actor.
+assert autonomy against - The actor reasserted its sovereignty and internal control vis-a-vis the target/recipient
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('interact_escalate'), 
+                                       stratify_variables=c('interact_escalate'),
+                                       keep_variables=c('interact_escalate'),
+                                       training_constraints="!is.na(interact_escalate) & interact_escalate!='' & (!interact_escalate %>% str_detect(';') )",
+                                       predicting_constraints="do_interact_kind %>% str_detect('^escalatory')" #only predicting sentences with an act
+                                       )
+
+```
+
+### interact_deescalate
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+lower alert - The actor signaled a crisis or conflict was now less likely.
+de-mobilization - The actor halted or undid preparation of military forces for conflict.
+remove fortify - The actor weakened their military forces or took down defenses.
+end exercise - The actor ceased military training or practice. 
+end weapons test - The actor ceased testing weaponry. 
+withdraw from area - Troops were taken out of an area.
+withdraw behind border - Troops left a previously occupied area of the opponent's territory.
+end blockade - The actor stopped restricting the target's movement, mobility, or access.
+cease fire - The actor stopped engaging in active combat and is no longer attacking. This can occur through an end of conflict as well as a formal declaration/agreement between actors to stop violence.
+retreat - The actor withdrew forces during combat as a result of superior enemy firepower or after a defeat.
+surrender - The actor ceased resistance to the opponent and submitted to their authority.
+declaration of peace - The actor declared an end to the conflict in favor of mutual peace.
+withdraw from war - The actor ceased involvement in military hostilities.
+switch sides in war - The actor changed its allies/opponents in the conflict.
+reduce control over - A colonist country (coded as initiator) provided more rights and autonomy to its colony (coded as target)
+decolonize - A colonist country (coded as initiator) withdrew from a colony (coded as target), leaving it independent
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('interact_deescalate'), 
+                                       stratify_variables=c('interact_deescalate'),
+                                       keep_variables=c('interact_deescalate'),
+                                       training_constraints="!is.na(interact_deescalate) & interact_deescalate!='' & (!interact_deescalate %>% str_detect(';') )",
+                                       predicting_constraints="do_interact_kind %>% str_detect('^deescalatory')" #only predicting sentences with an act
+                                       )
+
+```
+
+
+### interact_decreasecoop
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+break off negotiations - The actor cuts off ongoing negotiations with another actor.
+withdraw diplomats - The actor physically removes its diplomats/representatives from another country.
+violate terms of agreement - The actor took an action it had formally and legally agreed not to take. Conversely, the actor may have refused to take an action that it had formally and legally agreed to take.
+political succession - The actor declared itself independent and sovereign from some larger polity that previously held claim to it.
+leave alliance - The actor left a military alliance it had with another country.
+terminate treaty - The actor tore down a treaty such that none of its provisions were considered legally binding.
+end economic cooperation - The actor halted economic cooperation or imposed economic sanctions.
+end military cooperation - The actor ceased working with another actor on military matters, such as the mutual transfer of military equipment.
+end intelligence cooperation - The actor ceased working with another actor on intelligence matters, such as the mutual transfer of intelligence.
+end unspecified cooperation - The actor ceased working with another actor on unspecified of ambiguous matters.
+end economic aid - The actor ceased providing economic aid.
+end humanitarian aid - The actor ceased providing humanitarian aid.
+end military aid - The actor ceased providing military aid.
+end unspecified aid - The actor ceased providing an undefined or ambiguous type of aid.
+deployment to area - No military personnel were moved from one location to another in preparation for battle or work.
+end access - Prevent access to an area or across a border, usually for civilian populations. Distinct from a military blockade.
+expel - The actor forced individuals out of a specific geographic area.
+propaganda - The actor undertook a systematic effort to spread information to a general audience for the purpose of promoting some cause.
+imprison - The actor detained and confined specific individuals, often in a prison.
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('interact_decreasecoop'), 
+                                       stratify_variables=c('interact_decreasecoop'),
+                                       keep_variables=c('interact_decreasecoop'),
+                                       training_constraints="!is.na(interact_decreasecoop) & interact_decreasecoop!='' & (!interact_decreasecoop %>% str_detect(';') )",
+                                       predicting_constraints="do_interact_kind %>% str_detect('^uncooperative')" #only predicting sentences with an act
+                                       )
+
+```
+
+
+
+### interact_increasecoop
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+discussion - Informal diplomacy that does not involved in person or face to face meetings between political leaders or representatives.
+meeting - More formal diplomacy that involves in person or face to face meetings between political leaders or representatives.
+mediation - The actor engaged in intervention in a dispute with the intent to resolve it. The initiator is the mediating actor and the belligerents are the recipients of that mediation.
+natural conclusion of diplomacy - Diplomacy concluded in a natural manner. 
+sign formal agreement - The actor agreed to a legally binding agreement with another actor(s).
+settle dispute - The actor came to an informal arrangement that ended the dispute on satisfactory terms.
+join war on behalf of - The actor joined the conflict to aid an ally.
+formal military ally - Formal treaty between countries for security cooperation.
+mutual defense pact - Pact that requires countries to come to each other’s aid militarily if either is attacked by a third party.
+economic cooperation - The actor and the target exchanged economic goods or services.
+military cooperation - The actor and the target exchanged military goods or services.
+intelligence cooperation - The actor and the target provided or exchanged intelligence, information, data, or knowledge.
+unspecified cooperation - The actor and the target exchanged unspecified or ambiguously specified goods or services.
+general political support - Support that may not be material aid, but instead an expression of support or assistance
+economic aid - The voluntary transfer of economic resources from one country to another.
+humanitarian aid - The voluntary transfer of material and logistic assistance to people in need, often aiming to alleviate suffering from a disaster.
+military aid - The voluntary transfer of material to assist a country in its defense efforts.
+unspecified aid - The voluntary transfer of unspecified or ambiguous material from one country to another.
+inspections - The actor allowed inspections or investigations.
+release captives - The actor released hostages, prisoners, or other captives.
+cede territory - The actor formally transfers or surrenders territory.
+allow access - The actor allowed access to an area or across a border, usually for civilian populations. Distinct from ending a military blockade.
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('interact_increasecoop'), 
+                                       stratify_variables=c('interact_increasecoop'),
+                                       keep_variables=c('interact_increasecoop'),
+                                       training_constraints="!is.na(interact_increasecoop) & interact_increasecoop!='' & (!interact_increasecoop %>% str_detect(';') )",
+                                       predicting_constraints="do_interact_kind %>% str_detect('^cooperative')" #only predicting sentences with an act
+                                       )
+
+
+```
+
+
+
+## Domains / Forces/ Territory / Units
+
+### interact_domains
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+land - The interaction occurred on the dry portion of the earth’s surface like a continent. 
+sea - The interaction occurred in the ocean. 
+air - The interaction occurred in the air. 
+space - Beyond the earth’s atmosphere. 
+WMD - Nuclear, chemical, or biological weapons. Code the physical domain (land, sea, air, space, etc) where the WMD interaction occurred as well as the presence/existence of WMDs. 
+cyber - Where communication over computer networks occurs.
+none - The sentence does not describe an event with any of these actions.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('interact_domains'), 
+                                       stratify_variables=c('interact_domains'),
+                                       keep_variables=c('interact_domains'),
+                                       training_constraints="!is.na(interact_domains) & interact_domains!='' & (!interact_domains %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_do_interact %>% str_detect('^1')" #only predicting sentences with an act
+                                       )
+
+
+
+```
+
+
+### interact_forces
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+How many military personnel were involved during this event? Even if a precise number is not provided, make an educated guess using context. This refers to the overall number of military personnel involved, not just personnel on one side of the conflict.
+none - There were no military personnel involved during this event.
+individuals - Less than 10. As a rough guide: Air Force: Crews of a fighter 1-2, bomber  3-7; Detail 2-4 Army: Fireteam 4; Section 4-12
+tens - 10-99. Air Force: Element/Section 5-20 Army: Squad 8-24; Platoon 16-50;  Navy: Task Element a single vessel.
+hundreds - Navy: Frigate 100-200, Destroyer 175; Flotilla/Task Unit small number of vessels (not capital ships) Army: Company 100-250; Battalion 400-1000;  Air Force: Squadron 100-300 7-16 Aircraft;
+thousands - 1,000-9,999. As a rough guide:  Navy: Capital Ships Battleship 1,800-2,700; Aircraft carrier 5,000+;  Battlecruiser; Squadron/Task Unit (usually Capitol ships); Task Group (several Squadrons) Army: Regiment/Brigade 1000-3000; Air Force: Wing/Group 1,000-5,000  48-100 Aircraft;  
+tens of thousands - Division 10,000-15,000; Corps 25,000-50,000; Navy: Battle Fleet/Task Force; Fleet  Air Force: Aviation Division /Air Division / Air Brigade 2,000-10,000+ 100-200+ Aircraft  
+hundreds of thousands - 100,000+. Army: Army 100,000-150,000; Army Group/Front 400,000-1,000,000; Region/Theater 1,000,000-10,000,000 Navy: Navy or Admiralty 2+ Fleets, All vessels in a navy Air Force: Major Command/Command or Tactical Air Force /Russian Air army 
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('interact_forces'), 
+                                       stratify_variables=c('interact_forces'),
+                                       keep_variables=c('interact_forces'),
+                                       training_constraints="!is.na(interact_forces) & interact_forces!='' & (!interact_forces %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_do_interact %>% str_detect('^1')" #only predicting sentences with an act
+                                       )
+
+```
+### interact_fatalities
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+How many military personnel were killed during this event? This refers to military fatalities from a military act. Non-combat events like diplomacy and non-military personnel killed (like civilians during a riot or protest) should not be included. Even if a precise death toll is not provided, make an educated guess using context.
+none - There were no fatalities during this interaction.
+individuals - Less than 10. As a rough guide: Air Force: Crews of a fighter 1-2, bomber  3-7; Detail 2-4 Army: Fireteam 4; Section 4-12
+tens - 10-99. Air Force: Element/Section 5-20 Army: Squad 8-24; Platoon 16-50;  Navy: Task Element a single vessel.
+hundreds - Navy: Frigate 100-200, Destroyer 175; Flotilla/Task Unit small number of vessels (not capital ships) Army: Company 100-250; Battalion 400-1000;  Air Force: Squadron 100-300 7-16 Aircraft;
+thousands - 1,000-9,999. As a rough guide:  Navy: Capital Ships Battleship 1,800-2,700; Aircraft carrier 5,000+;  Battlecruiser; Squadron/Task Unit (usually Capitol ships); Task Group (several Squadrons) Army: Regiment/Brigade 1000-3000; Air Force: Wing/Group 1,000-5,000  48-100 Aircraft;  
+tens of thousands - Division 10,000-15,000; Corps 25,000-50,000; Navy: Battle Fleet/Task Force; Fleet  Air Force: Aviation Division /Air Division / Air Brigade 2,000-10,000+ 100-200+ Aircraft  
+hundreds of thousands - 100,000+. Army: Army 100,000-150,000; Army Group/Front 400,000-1,000,000; Region/Theater 1,000,000-10,000,000 Navy: Navy or Admiralty 2+ Fleets, All vessels in a navy Air Force: Major Command/Command or Tactical Air Force /Russian Air army 
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('interact_fatalities'), 
+                                       stratify_variables=c('interact_fatalities'),
+                                       keep_variables=c('interact_fatalities'),
+                                       training_constraints="!is.na(interact_fatalities) & interact_fatalities!='' & (!interact_fatalities %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_do_interact %>% str_detect('^1')" #only predicting sentences with an act
+                                       )
+
+```
+
+
+### interact_territory
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+How did territory change as a result of this interaction? Can refer to land gained or lost as a result of conflict as well as land gained or lost from a treaty or mutual agreement. For an action event, the land must actually be gained or lost and not just represent a desire or intent to acquire land. For a speech event, the change in land that would hypothetically occur if the violence occurred should be coded.
+No Clear Change - There was no noticeable change in territory owned or possessed by any party.
+Small Gain - The actor gained a small amount of territory such as a city (< 500 square miles).
+Large  Gain - The actor gained a large amount of territory ( >500 square miles ).
+Small Loss - The actor lost a small amount of territory such as a city ( <500 square miles ).
+Large Loss - The actor lost a large amount of territory ( >500 square miles ).
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('interact_territory'), 
+                                       stratify_variables=c('interact_territory'),
+                                       keep_variables=c('interact_territory'),
+                                       training_constraints="!is.na(interact_territory) & interact_territory!='' & (!interact_territory %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_do_interact %>% str_detect('^1')" #only predicting sentences with an act
+                                       )
+
+```
+
+
+### interact_units
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+What type of military units were involved in the interaction?
+none - no military units involved
+troops - Individual human soldiers or units of soldiers.
+armor - Armored vehicles such as tanks or humvees. 
+artillery - Large caliber weapons for discharging missiles like cannons and missile launchers.
+surface ships - Warship that operates on the surface of the water.. 
+submarines -Warship that operates underneath the surface of the water.
+aircraft carriers - Large naval vessel designed as a mobile air base from which aircraft can takeoff and land.
+fighters - Military aircraft designed for air-to-air combat.
+bombers - Military aircraft designed to attack ground and sea targets.
+surveillance - Military aircraft used to collect information and intelligence.
+missiles - Precision-guided munitions, typically discharged from ground or sea units.
+satellites - Man-made object that orbits around the earth.
+chemical - Weapon using toxic chemicals like nerve gas, tear gas, or pepper spray.
+biological - Weapon using living organisms or biological toxins like bacteria, viruses, or fungi.
+nuclear - Weapon using atomic power in the form of fission or fusion nuclear reactors.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('interact_units'), 
+                                       stratify_variables=c('interact_units'),
+                                       keep_variables=c('interact_units'),
+                                       training_constraints="!is.na(interact_units) & interact_units!='' & (!interact_units %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_do_interact %>% str_detect('^1')" #only predicting sentences with an act
+                                       )
+
+```
+
+
+### interact_geoscope
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+What was the geographic scope of the interaction? This refers to the geographic size of the interaction described. If you were to point out where the specific interaction took place on a map, this would describe that.
+Battlefield - A single combat zone outside of habited territory like a town or city.
+Populated Place (Town/City) - A town or city that could be located on a map.
+Capital - The capital of a nation where the central government resides.
+Point Other - Another point that could be identified on a map. 
+Battlefields - Numerous combat zones outside of habited territory like a town or city. 
+Populated Places - Numerous towns or cities. 
+Points Other - Another set of points that could be identified on a map. 
+Front - A line extending across two points or defining a division between two areas.
+Coastline - The area between the sea and the adjoining land.
+Border - The area that separates two countries or territories from one another.
+Line Other - Another two dimensional area that can be characterized as connecting two points or dividing two areas.
+Region - An area that can defined as having large square footage extending in numerous directions.
+Country - A nation.
+Body of Water - An ocean, sea, lake, river, or other large body of water.
+Airspace - Takes place above the surface of the earth.
+Polygon Other
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('interact_geoscope'), 
+                                       stratify_variables=c('interact_geoscope'),
+                                       keep_variables=c('interact_geoscope'),
+                                       training_constraints="!is.na(interact_geoscope) & interact_geoscope!='' & (!interact_geoscope %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_do_interact %>% str_detect('^1')" #only predicting sentences with an act
+                                       )
+
+```
+
+
+## Do Actors
+
+Conditional on the whole action types
+
+### do_actor_a
+
+```{r, eval=T}
+
+
+preamble="You are a text extractor that identifies the relevant actor in a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+do actor a - Who is the actor taking the action described in this sentence? This describes the primary subject of the sentence. Think of this as the actor who is performing the action, not the actor on the receiving end of an action. The only actors are states, rebel groups, NGO’s, etc. Civilians do not count as actors and neither do agents of actors like the president or a military unit.
+End Codebook
+"
+valid_event <- classify_many_sentences(preamble=preamble,
+                                       variables=c('do_leaf', 'do_actor_a'), 
+                                       stratify_variables=c('do_leaf'),
+                                       keep_variables=c('do_actor_a'),
+                                       training_constraints="!is.na(do_leaf) & do_leaf!='' & (!do_leaf %>% str_detect(';') )", #is a say and only one
+                                       predicting_constraints="sentence_type_includes_do %>% str_detect('^1')", #is a do
+                                       )
+```
+
+
+### do_actor_b
+
+```{r, eval=T}
+
+preamble="You are a text extractor that identifies the relevant actor in a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+do actor b - Who is the actor that is the receiver of the action described in this sentence? If there is no receiver for the immediate action that actor 1 is taking, leave this option blank. This should describe the actor on the receiving end of the action or to whom the action is directed. This does not refer to another actor who is also taking the action described.
+End Codebook
+"
+
+valid_event <- classify_many_sentences(preamble=preamble,
+                                       variables=c('do_interact_kind', 'do_actor_a', 'do_actor_b'), 
+                                       stratify_variables=c('do_kind'),
+                                       keep_variables=c('do_actor_b'),
+                                       training_constraints="sentence_type_includes_do_interact %>% str_detect('^1') & !is.na(do_kind) & do_kind!='' & (!do_kind %>% str_detect(';') )", 
+                                       predicting_constraints="sentence_type_includes_do_interact %>% str_detect('^1')", #is a do
+                                       )
+```
+
+
+
+
+
+
+## Durations
+
+### do_duration
+
+```{r, eval=T}
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+How long does this event last? If not explicitly specified, what is your best estimate? An event can continue running chronologically, while other events are occurring.  The precise duration of the event will not always be described, so the coder should infer the length of time during which the action took place based on context and sequencing with neighboring events. This should include the entirety of the event, not just when it began.
+Instantaneous - The event latest for a moment. Often used with thoughts and realizations, especially crisis triggers and endings. 
+Minutes - Less than an hour. Use this for speech events like passing resolutions or phone calls.
+Hours - More than an hour, less than a day.
+Days - More than 1 day, less than 7 days.
+Weeks - More than 1 week, less than 4 weeks.
+Months - More than a month, less than a year.
+Years - More than a year, less than a decade.
+Decades - More than 10 years.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c('do_leaf','do_duration'), 
+                                       stratify_variables=c('do_duration'),
+                                       keep_variables=c('do_duration'),
+                                       training_constraints="!is.na(do_duration) & do_duration!='' & (!do_duration %>% str_detect(';') )",
+                                       predicting_constraints="sentence_type_includes_do %>% str_detect('^1')", #is a do
+                                       )
+
+```
+
+
+# Conditions
+
+### condition
+
+```{r, eval=T}
+
+#events_agreed_wide_filtered %>% dplyr::count(condition, sayintkind)
+#does not happen ultimatum 112
+#happens offer 47
+#ultimatum
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+Condition? A condition can trigger when something happens or because something does not happen.
+A) Happens - Actor communicates that if the following action happens, then it will trigger the consequence.
+B) Doesn’t Happen -Actor communicates the if the following event does not happen, then it will trigger the consequence.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c( 'say_actor_a','say_actor_b', 'sayintkind','do_leaf','condition'), 
+                                       stratify_variables=c('condition'),
+                                       keep_variables=c('condition'),
+                                       training_constraints="!is.na(condition) & condition!='' & (!condition %>% str_detect(';') )",
+                                       predicting_constraints="sayintkind %>% str_detect('ultimatum|offer')", #is a do
+                                       )
+
+```
+
+
+
+### consequence
+
+```{r, eval=T}
+
+#events_agreed_wide_filtered %>% dplyr::count(condition, consequence, sayintkind)
+
+preamble="You are a text classifier that assigns a label to a sentence taken from a narrative about an international crisis.
+
+Begin Codebook
+Condition? A condition can trigger when something happens or because something does not happen.
+A) Happens - Actor communicates that if the following action happens, then it will trigger the consequence.
+B) Doesn’t Happen -Actor communicates the if the following event does not happen, then it will trigger the consequence.
+End Codebook
+"
+valid_event <- classify_many_sentences(
+                                       preamble=preamble,
+                                       variables=c( 'say_actor_a','say_actor_b', 'sayintkind','do_leaf','condition','consequence'), 
+                                       stratify_variables=c('consequence'),
+                                       keep_variables=c('consequence'),
+                                       training_constraints="!is.na(condition) & condition!='' & (!condition %>% str_detect(';') )",
+                                       predicting_constraints="!is.na(condition) & condition!=''", #is a do
+                                       )
+
+```
+
+
+
+

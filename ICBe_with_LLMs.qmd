@@ -1,0 +1,122 @@
+---
+title: "ICBe with LLM and 3bit Falcon"
+format: html
+editor: visual
+---
+
+# Data Loads
+
+```{r}
+#install.packages('tidyverse')
+library(tidyverse)
+#install.packages('jsonlite')
+library(jsonlite)
+
+# Download the ICBe datasets locally
+source='https://raw.githubusercontent.com/CenterForPeaceAndSecurityStudies/ICBEdataset/master/replication_data/out/ICBe_V1.1_long_clean.Rds'
+destination="./data_in/ICBe_V1.1_events_agreed_long.Rds"
+if(!file.exists(destination)){
+  download.file(url=source, destfile=destination, method="curl", quiet = FALSE)
+}
+
+ICBe_V11_events_agreed_long <- readRDS(destination)
+ICBe_V11_events_agreed_long_196 <- ICBe_V11_events_agreed_long %>% filter(crisno==196)
+
+source='https://raw.githubusercontent.com/CenterForPeaceAndSecurityStudies/ICBEdataset/master/replication_data/out/ICBe_V1.1_events_agreed.Rds'
+destination="./data_in/ICBe_V1.1_events_agreed.Rds"
+if(!file.exists(destination)){
+  download.file(url=source, destfile=destination, method="curl", quiet = FALSE)
+}
+
+ICBe_V11_events_agreed <- readRDS(destination)
+
+#we need a way to turn these into standardized JSON
+library(tidyverse)
+ICBe_V11_events_agreed_196 <- ICBe_V11_events_agreed %>% filter(crisno==196)
+
+#ICBe_V11_events_agreed_long_196 %>% filter(varname %in% "sentence_events")
+#ICBe_V11_events_agreed_196
+
+#contains thought event
+#contains speech event
+#contains interaction event
+#contains action event
+
+
+ICBe_V11_events_agreed_196 %>% names()
+
+#https://stackoverflow.com/questions/24862046/cumulatively-paste-concatenate-values-grouped-by-another-variable
+cumpaste = function(x, .sep = " ") 
+  Reduce(function(x1, x2) paste(x1, x2, sep = .sep), x, accumulate = TRUE)
+
+```
+
+#
+
+```{r}
+
+sentence_span_text <- ICBe_V11_events_agreed %>%
+  dplyr::select(crisno,sentence_number_int_aligned, sentence_span_text) %>% distinct() 
+
+story_so_far <- ICBe_V11_events_agreed %>%
+    dplyr::select(crisno,sentence_number_int_aligned, sentence_span_text) %>% distinct() %>%
+    arrange(crisno,sentence_number_int_aligned) %>%
+    group_by(crisno) %>% 
+      transmute( 
+        story_so_far =  accumulate(sentence_span_text, ~ paste(.x, .y))  
+      )  %>%
+      mutate(sentence_number_int_aligned=row_number()) %>%
+      mutate(story_so_far = story_so_far %>% lag())
+
+```
+
+# Start with actors
+
+To avoid fine tuning, we're going to have to give very specific and disagregated questions.
+
+That means starting with extracting actors and repetitively asking about them over and over again.
+
+```{r}
+
+#With long stories you have to give it signposts or it breaks
+#It's also making reasonable guesses given a vague a not finetuned codebook. I think we're going to have to be hyper specific.
+#Story: There were three crisis actors in the most ominous of all East/West crises, the United States, Cuba, and the Soviet Union. The crisis lasted from 16 October to 20 November 1962. After the 1961 Bay of Pigs abortive invasion (see Case #181), Cuba became one of the central issues of U.S. foreign policy: the U.S. viewed Cuba as a potential source of communist-oriented subversive activities in Latin America. When the U.S. discovered the presence of Soviet military personnel in Cuba on 7 September 1962 it called up 150,000 reservists. The Soviets mobilized on the 11th. Although persistent rumors circulated concerning the deployment of Soviet missiles in Cuba, Soviet Ambassador Anatoly Dobrynin denied the charges, and Premier Khrushchev gave his personal assurances that ground-to-ground missiles would never be shipped to Cuba. On the eve of the Missile crisis Washington did not openly challenge the Soviet statements concerning the defensive character of the weapons being sent to Cuba. The U.S. crisis was triggered on 16 October when the CIA presented to President Kennedy photographic evidence of the presence of Soviet missiles in Cuba. The U.S. responded with a decision on the 20th to blockade all offensive military equipment en route to Cuba. When this was announced on 22 October, a crisis was triggered for Cuba and the USSR. An urgent meeting of the UN Security Council was requested by both the U.S. and Cuba on the 22nd, and by the USSR the next day.
+#Task: Given the story above, classify the sentence below as either an action or an interaction. An action involves only unilateral moves performed by actors individually, and an interaction involves bilateral moves between two actors acting jointly.
+#Sentence: On the 23rd as well, the Soviets accused the United States of violating the UN Charter and announced an alert of its armed forces and those of the Warsaw Pact members.
+#\n\n### Response:
+
+coding_instructions="Given the story above, identify which countries, groups, or organizations are explicitly mentioned in the sentence below. List all actors that are explicitly mentioned in the sentence and do not list any actor not explicitly mentioned in the sentence. Only return the names of actors in a semicolon separated list with no other text."
+
+prompt_action_vs_interaction <- has_action  %>%
+          left_join(story_so_far) %>%
+          mutate(prompt= paste0(
+                              "Story: ",
+                               story_so_far, 
+                               "\n",
+                               "Task: ",
+                               coding_instructions,
+                               "\n",
+                               "Sentence: ",
+                               sentence_span_text,
+                               "\n\n### Response:"
+                               ) %>% str_replace("^NA ","") %>% str_replace(" NA\n","\n") %>% trimws()
+             )
+  
+prompt_action_vs_interaction %>%
+  filter(crisno==196) %>%
+  pull(prompt)  %>% 
+  .[1]
+
+prompt_action_vs_interaction %>%
+  filter(crisno==196) %>%
+  pull(prompt)  %>% 
+  .[2]
+
+```
+
+#
+
+```{t}
+
+```
+

@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.3.353">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>ICBeLLM: High Quality International Events Data with Open Source Large Language Models on Consumer Hardware</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="paper_files/libs/clipboard/clipboard.min.js"></script>
+<script src="paper_files/libs/quarto-html/quarto.js"></script>
+<script src="paper_files/libs/quarto-html/popper.min.js"></script>
+<script src="paper_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="paper_files/libs/quarto-html/anchor.min.js"></script>
+<link href="paper_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="paper_files/libs/quarto-html/quarto-syntax-highlighting.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="paper_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="paper_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="paper_files/libs/bootstrap/bootstrap.min.css" rel="stylesheet" id="quarto-bootstrap" data-mode="light">
+
+  <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+</head>
+
+<body class="fullcontent">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">ICBeLLM: High Quality International Events Data with Open Source Large Language Models on Consumer Hardware</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+</header>
+
+<section id="abstract" class="level1">
+<h1>Abstract</h1>
+<p>The International Crises Behavior Events (ICBe) ontology provides high coverage over all of the thoughts, communications, and actions in the events that constitute international relations. The disadvantage of that level of detail is high human capital costs in manually applying it to new texts. Whether such an ontolgy is practical for international relations research given limited human and financial resources is a pressing concern. We introduce a working proof of concept showing that ICBe codings can be reliably extracted from new text using the current generation of open source large language models (LLM) running on consumer grade computer hardware. Our solution requires no finetuning and only limited prompt engineering. We detail our solution and present detailed benchmarks against the original ICBe codings. We conclude by discussing the implications of very high quality event coding of any text being within reach of individual researchers and home enthusiasts.</p>
+</section>
+<section id="introduction" class="level1">
+<h1>Introduction</h1>
+<p>The International Crisis Behavior Events (ICBe) project (Douglass et al.&nbsp;2022), provides a sentence-event level measurement of every thought, speech, and action described in a historical narrative of an international crisis.</p>
+<p>Detailed codebook Hierarchical ontology</p>
+<p>Abstraction Codebook Few shot examples Full narrative vs individual sentences</p>
+<p>Definitions</p>
+<section id="data-and-domain" class="level2">
+<h2 class="anchored" data-anchor-id="data-and-domain">Data and Domain</h2>
+<p>Version 1.1 of the ICBe event dataset (retrieved August 20, 2023, https://github.com/CenterForPeaceAndSecurityStudies/ICBEdataset/). Agreed-wide version which as the crisis-sentence-actors-eventtype as the unit of analysis. These are the set of all event codings that received majority support across expert coders or were chosen by at least one expert and a majority of novice coders. We further filter out any degenerate sentences (did not begin with a capital letter or end in a period) as these usually reflect parsing errors or some other fragment like section titles or references. We further filter down to one event per sentence, choosing the one with the most coded information.</p>
+</section>
+</section>
+<section id="task-definition" class="level1">
+<h1>Task Definition</h1>
+<p>The task of event coding is abstraction, a combination of information extraction and summarization. History suffers from the coastline paradox, such that the finer the resolution of your measurements the more detail you will necessarily find about any one event and between any two events. The observer therefore needs a theoretically justified scale at which an event should be summarized, and conditional on that scale, the list of facts that are relevant for coding. In the context of international events from international crisis, let event abstraction be formalized as follows. A historical episode, H, is demarcated by a period of time [Tstart, Tend] ∈ T, a set of Players p ∈ P, and a set of behaviors they undertook during that time b ∈ B. International Relations, IR, is the system of regularities that govern the strategic interactions that world actors make during a historical episode, given their available options, preferences, beliefs, and expectations of choices made by others. We observe neither H nor IR directly. Rather the Historical Record, HR, produces documents d ∈ D containing some relevant and true (as well as irrelevant and untrue) information about behaviors that were undertaken recorded in the form of unstructured natural language text. The task is to combine informative priors about IR with an unstructured corpus D to produce a series of structured discrete events, e ∈ E, that have high coverage, precision, and recall over what actually took place in history, H.</p>
+<section id="trainvalidtest-strategy" class="level2">
+<h2 class="anchored" data-anchor-id="trainvalidtest-strategy">Train/Valid/Test Strategy</h2>
+<p>To prevent information leakage and to generate a representative estimate of out of sample performance on new unseen crises text, we split the ICBe event dataset into training, validation, and test splits that are contiguous in crisis (never places the same crisis in more than one split) and in time (the training set is temporally prior to the validation set which is temporally prior to the test set).</p>
+<p>Further check for leakage ICBe is not in the training data The crisis narratives might be.</p>
+</section>
+</section>
+<section id="task-description" class="level1">
+<h1>Task Description</h1>
+<p>We describe the task of event coding as event abstraction. History suffers from the coastline paradox, where there more finely you measure the more detail you will necessarily find. Event coding is therefore both a judgement about what happened and also a judgement about at what level of detail to summarize that information. The ICbe project chooses the sentence-event as the discrete unit of detail for a historical narrative about a large historical episode. Each sentence can provide new information about an event, defined as a actor-behavior pair. The ICBe project allowed for up to three distinct events to be introduced in a sentence.</p>
+<p>Further, the ICBe ontology recognizes three overarching classes of events: Think, Say, Do. Do events describe a physical action by one or more actors. Say events describe a communication by one or more of the speaker actors to possibly one or more audience actors. Often a say event will be about one do event, e.g.&nbsp;making a threat to invade, or two events, threatening to invade unless a concession is made. Think events provide information about a cognition by one of the actors, e.g.&nbsp;experienced the start of a crisis period. A thought</p>
+<p>We identify three natural language processing tasks, classification, text extraction, and summarization.</p>
+</section>
+<section id="language-model" class="level1">
+<h1>Language Model</h1>
+<p>Rather than finetune a model to perform these tasks, we opted for prompt engineering with an existing large language model. We employed an instruction tuned variant of Meta’s LAMA2 model called Platypus2 which at the time of this writing was the highest performing open source model on the Hugging Face benchamrking harness. We selected a 4 bit version quantized by AutoGPTQ as the largest model that would fit in our compute budget. We selected two NVIDIA 4090TX cards with a join 48gb of VRAM as our target compute budget as a high end consumer grade. We are confident similar or better performance is obtainable through a commercial API such as GPT4 or GPT3.5, but we wanted to know whether large scale event coding from natural language texts was now feasible at home with a fixed investment in hardware.</p>
+</section>
+<section id="prompt-strategy" class="level1">
+<h1>Prompt Strategy</h1>
+<p>Starting at the root of the ICBe ontology, we designed a simple prompt template that applied to each subsequent node. The template’s parts were as follows.</p>
+<p>First, a short preamble described which of the three types of NLP tasks was to be performed.</p>
+<p>Second, a codebook for the specific question and descriptions of each of the possible answers (if classification)</p>
+<p>Third, a stratified sample of examples draw from the training split.</p>
+<p>This is therefore a few shot task, where between 40 and 120 coded examples were provided each time depending on how many could fit in the context window. Examples were only ever drawn from the training sample, and the modeling loop was only ever performed on the validation set, with test sentence see only at the very end. Examples were selected via two criteria. The first was stratified sampling to provide a balanced number of examples across possible answer choices if classification. For open ended answers, we stratified on the first discrete node reached traversing upwards in the ontology towards the root. Second, we sorted sentences based on their restricted Damerau-Levenshtein string distance and kept the most of each strata that would fit in the context window. We could have employed a more sophisticated selection process based on semantic similarity with a different LLM but we wanted to limit the amount of preprocessing required as much as possible.</p>
+<p>The ICBe ontology was designed as a rooted hierarchy similar to other human classification projects like ImageNet. The coder makes few coarse decisions at the root of the ontology, and then based on the answers proceeds to a small subset of relevant questions that ask about increasingly fine details. A completely unplanned and fortuitous benefit of this approach, is that is also helps LLMs to break the task down this way. The finite context window has to be split between a codebook, example sentences, as much of the full crisis narrative that will fit, and the specific sentence to code. Questions at toward the root are simpler, with fewer options, and have more and more relevant example sentences to draw from as well.</p>
+</section>
+<section id="results" class="level1">
+<h1>Results</h1>
+<p>Performance evaluation for an abstraction task poses many unique challenges. Consider the following success and failure modes. The system could predict exactly the same event down to every detail. The system could predict an additional event that is correct but was not in the original. The system could predict the same event, but choose a different level of detail. The system could produce a semantically similar by stylistically different coding, as was observed between different human coders, e.g.&nbsp;a threat to do something unless a condition is met can also be described as a promise to not do something if a condition is met. This and other examples of unintentional synonymity in the ICBe ontology create challenges for 1 to 1 direct matching.</p>
+<section id="recall" class="level2">
+<h2 class="anchored" data-anchor-id="recall">Recall</h2>
+<p>We first consider recall defined as the probability that a sentence-token coded by a human was also identically coded by the system, <span class="math inline">\(Pr(Token_{LLM} | Token_{H})\)</span>. The predictions are unstructured text, and so we normalize both the human coding and predictions.</p>
+<div class="cell">
+<div class="cell-output-display">
+<table class="table table-sm table-striped small">
+<thead>
+<tr class="header">
+<th style="text-align: left;">name</th>
+<th style="text-align: right;">correct</th>
+<th style="text-align: right;">Y_values</th>
+<th style="text-align: right;">perc</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">condition_act_cooperative</td>
+<td style="text-align: right;">1596</td>
+<td style="text-align: right;">1597</td>
+<td style="text-align: right;">1.00</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">condition_act_deescalate</td>
+<td style="text-align: right;">1596</td>
+<td style="text-align: right;">1597</td>
+<td style="text-align: right;">1.00</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">condition_act_escalate</td>
+<td style="text-align: right;">1593</td>
+<td style="text-align: right;">1599</td>
+<td style="text-align: right;">1.00</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">condition_act_uncooperative</td>
+<td style="text-align: right;">1597</td>
+<td style="text-align: right;">1596</td>
+<td style="text-align: right;">1.00</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">condition_interact_decreasecoop</td>
+<td style="text-align: right;">1592</td>
+<td style="text-align: right;">1597</td>
+<td style="text-align: right;">1.00</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">condition_interact_fatalities</td>
+<td style="text-align: right;">1598</td>
+<td style="text-align: right;">1596</td>
+<td style="text-align: right;">1.00</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">condition_interact_forces</td>
+<td style="text-align: right;">1597</td>
+<td style="text-align: right;">1596</td>
+<td style="text-align: right;">1.00</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">sentence_events</td>
+<td style="text-align: right;">1598</td>
+<td style="text-align: right;">1596</td>
+<td style="text-align: right;">1.00</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">condition_do_kind</td>
+<td style="text-align: right;">1588</td>
+<td style="text-align: right;">1597</td>
+<td style="text-align: right;">0.99</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">condition_interact_deescalate</td>
+<td style="text-align: right;">1589</td>
+<td style="text-align: right;">1607</td>
+<td style="text-align: right;">0.99</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">condition_interact_domains</td>
+<td style="text-align: right;">1579</td>
+<td style="text-align: right;">1601</td>
+<td style="text-align: right;">0.99</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">condition_interact_escalate</td>
+<td style="text-align: right;">1589</td>
+<td style="text-align: right;">1600</td>
+<td style="text-align: right;">0.99</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">condition_interact_increasecoop</td>
+<td style="text-align: right;">1591</td>
+<td style="text-align: right;">1601</td>
+<td style="text-align: right;">0.99</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">condition_interact_territory</td>
+<td style="text-align: right;">1582</td>
+<td style="text-align: right;">1602</td>
+<td style="text-align: right;">0.99</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">condition_interact_units</td>
+<td style="text-align: right;">1581</td>
+<td style="text-align: right;">1603</td>
+<td style="text-align: right;">0.99</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">condition_do_actor_b</td>
+<td style="text-align: right;">1566</td>
+<td style="text-align: right;">1605</td>
+<td style="text-align: right;">0.98</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">condition_do_interact_kind</td>
+<td style="text-align: right;">1567</td>
+<td style="text-align: right;">1600</td>
+<td style="text-align: right;">0.98</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">condition_interact_geoscope</td>
+<td style="text-align: right;">1577</td>
+<td style="text-align: right;">1612</td>
+<td style="text-align: right;">0.98</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">act_deescalate</td>
+<td style="text-align: right;">1558</td>
+<td style="text-align: right;">1605</td>
+<td style="text-align: right;">0.97</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">condition_do_actor_a</td>
+<td style="text-align: right;">1559</td>
+<td style="text-align: right;">1607</td>
+<td style="text-align: right;">0.97</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">condition_interact_location</td>
+<td style="text-align: right;">1576</td>
+<td style="text-align: right;">1630</td>
+<td style="text-align: right;">0.97</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">act_cooperative</td>
+<td style="text-align: right;">1496</td>
+<td style="text-align: right;">1617</td>
+<td style="text-align: right;">0.93</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">date_latest_day</td>
+<td style="text-align: right;">1479</td>
+<td style="text-align: right;">1625</td>
+<td style="text-align: right;">0.91</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">raterconfidence_reason_survey</td>
+<td style="text-align: right;">1519</td>
+<td style="text-align: right;">1667</td>
+<td style="text-align: right;">0.91</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">date_latest_month_part</td>
+<td style="text-align: right;">1469</td>
+<td style="text-align: right;">1624</td>
+<td style="text-align: right;">0.90</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">interact_deescalate</td>
+<td style="text-align: right;">1486</td>
+<td style="text-align: right;">1649</td>
+<td style="text-align: right;">0.90</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">act_uncooperative</td>
+<td style="text-align: right;">1474</td>
+<td style="text-align: right;">1654</td>
+<td style="text-align: right;">0.89</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">date_latest_decade</td>
+<td style="text-align: right;">1446</td>
+<td style="text-align: right;">1632</td>
+<td style="text-align: right;">0.89</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">date_latest_year</td>
+<td style="text-align: right;">1446</td>
+<td style="text-align: right;">1633</td>
+<td style="text-align: right;">0.89</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">think_sentence_events</td>
+<td style="text-align: right;">1455</td>
+<td style="text-align: right;">1639</td>
+<td style="text-align: right;">0.89</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">date_latest_month</td>
+<td style="text-align: right;">1443</td>
+<td style="text-align: right;">1633</td>
+<td style="text-align: right;">0.88</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">date_latest_year_part</td>
+<td style="text-align: right;">1442</td>
+<td style="text-align: right;">1632</td>
+<td style="text-align: right;">0.88</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">act_escalate</td>
+<td style="text-align: right;">1429</td>
+<td style="text-align: right;">1650</td>
+<td style="text-align: right;">0.87</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">interact_decreasecoop</td>
+<td style="text-align: right;">1442</td>
+<td style="text-align: right;">1652</td>
+<td style="text-align: right;">0.87</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">interact_fatalities</td>
+<td style="text-align: right;">1396</td>
+<td style="text-align: right;">1600</td>
+<td style="text-align: right;">0.87</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">sayintkind_react</td>
+<td style="text-align: right;">1427</td>
+<td style="text-align: right;">1648</td>
+<td style="text-align: right;">0.87</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">consequence</td>
+<td style="text-align: right;">1322</td>
+<td style="text-align: right;">1603</td>
+<td style="text-align: right;">0.82</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">condition</td>
+<td style="text-align: right;">1301</td>
+<td style="text-align: right;">1603</td>
+<td style="text-align: right;">0.81</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">raterconfidence_reason</td>
+<td style="text-align: right;">1384</td>
+<td style="text-align: right;">1772</td>
+<td style="text-align: right;">0.78</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">interact_escalate</td>
+<td style="text-align: right;">1318</td>
+<td style="text-align: right;">1802</td>
+<td style="text-align: right;">0.73</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">interact_forces</td>
+<td style="text-align: right;">1185</td>
+<td style="text-align: right;">1619</td>
+<td style="text-align: right;">0.73</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">do_kind</td>
+<td style="text-align: right;">1187</td>
+<td style="text-align: right;">1669</td>
+<td style="text-align: right;">0.71</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">do_leaf</td>
+<td style="text-align: right;">1306</td>
+<td style="text-align: right;">1834</td>
+<td style="text-align: right;">0.71</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">sentence_type_includes_say</td>
+<td style="text-align: right;">1136</td>
+<td style="text-align: right;">1596</td>
+<td style="text-align: right;">0.71</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">interact_increasecoop</td>
+<td style="text-align: right;">1259</td>
+<td style="text-align: right;">1834</td>
+<td style="text-align: right;">0.69</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">sentence_type_includes_do</td>
+<td style="text-align: right;">1094</td>
+<td style="text-align: right;">1596</td>
+<td style="text-align: right;">0.69</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">sentence_type_includes_thought</td>
+<td style="text-align: right;">1085</td>
+<td style="text-align: right;">1596</td>
+<td style="text-align: right;">0.68</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">think_actor_a</td>
+<td style="text-align: right;">1142</td>
+<td style="text-align: right;">1701</td>
+<td style="text-align: right;">0.67</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">thinkkind</td>
+<td style="text-align: right;">1073</td>
+<td style="text-align: right;">1645</td>
+<td style="text-align: right;">0.65</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">interact_units</td>
+<td style="text-align: right;">1146</td>
+<td style="text-align: right;">1840</td>
+<td style="text-align: right;">0.62</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">interact_domains</td>
+<td style="text-align: right;">1060</td>
+<td style="text-align: right;">1745</td>
+<td style="text-align: right;">0.61</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">interact_territory</td>
+<td style="text-align: right;">1003</td>
+<td style="text-align: right;">1677</td>
+<td style="text-align: right;">0.60</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">say_actor_a</td>
+<td style="text-align: right;">1116</td>
+<td style="text-align: right;">1849</td>
+<td style="text-align: right;">0.60</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">say_actor_b</td>
+<td style="text-align: right;">1131</td>
+<td style="text-align: right;">1938</td>
+<td style="text-align: right;">0.58</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">do_interact_kind</td>
+<td style="text-align: right;">953</td>
+<td style="text-align: right;">1748</td>
+<td style="text-align: right;">0.55</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">do_actor_b</td>
+<td style="text-align: right;">991</td>
+<td style="text-align: right;">1934</td>
+<td style="text-align: right;">0.51</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">interact_geoscope</td>
+<td style="text-align: right;">932</td>
+<td style="text-align: right;">1868</td>
+<td style="text-align: right;">0.50</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">interact_location</td>
+<td style="text-align: right;">1167</td>
+<td style="text-align: right;">2311</td>
+<td style="text-align: right;">0.50</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">do_actor_a</td>
+<td style="text-align: right;">923</td>
+<td style="text-align: right;">1902</td>
+<td style="text-align: right;">0.49</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">sayintkind</td>
+<td style="text-align: right;">861</td>
+<td style="text-align: right;">1744</td>
+<td style="text-align: right;">0.49</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">date_earliest_day</td>
+<td style="text-align: right;">771</td>
+<td style="text-align: right;">1671</td>
+<td style="text-align: right;">0.46</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">date_earliest_month_part</td>
+<td style="text-align: right;">706</td>
+<td style="text-align: right;">1643</td>
+<td style="text-align: right;">0.43</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">date_earliest_decade</td>
+<td style="text-align: right;">672</td>
+<td style="text-align: right;">1667</td>
+<td style="text-align: right;">0.40</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">date_earliest_year</td>
+<td style="text-align: right;">673</td>
+<td style="text-align: right;">1677</td>
+<td style="text-align: right;">0.40</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">date_earliest_month</td>
+<td style="text-align: right;">526</td>
+<td style="text-align: right;">1644</td>
+<td style="text-align: right;">0.32</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">date_earliest_year_part</td>
+<td style="text-align: right;">518</td>
+<td style="text-align: right;">1620</td>
+<td style="text-align: right;">0.32</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">sentence_type_includes_do_interact</td>
+<td style="text-align: right;">491</td>
+<td style="text-align: right;">1597</td>
+<td style="text-align: right;">0.31</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">do_duration</td>
+<td style="text-align: right;">558</td>
+<td style="text-align: right;">1936</td>
+<td style="text-align: right;">0.29</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">do_timing_reorder</td>
+<td style="text-align: right;">459</td>
+<td style="text-align: right;">1649</td>
+<td style="text-align: right;">0.28</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">raterconfidence</td>
+<td style="text-align: right;">465</td>
+<td style="text-align: right;">1722</td>
+<td style="text-align: right;">0.27</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">event_type</td>
+<td style="text-align: right;">453</td>
+<td style="text-align: right;">1747</td>
+<td style="text-align: right;">0.26</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">sentence_type_includes_do_act</td>
+<td style="text-align: right;">353</td>
+<td style="text-align: right;">1596</td>
+<td style="text-align: right;">0.22</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">do_timing</td>
+<td style="text-align: right;">491</td>
+<td style="text-align: right;">2859</td>
+<td style="text-align: right;">0.17</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">count_filled_fields</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1793</td>
+<td style="text-align: right;">0.00</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">event_type_do</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1729</td>
+<td style="text-align: right;">0.00</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">event_type_do_act</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1669</td>
+<td style="text-align: right;">0.00</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">event_type_do_interact</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1695</td>
+<td style="text-align: right;">0.00</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">event_type_new</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">1812</td>
+<td style="text-align: right;">0.00</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">event_type_say</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1729</td>
+<td style="text-align: right;">0.00</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">event_type_thought</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1634</td>
+<td style="text-align: right;">0.00</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">event_type_yesno</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1597</td>
+<td style="text-align: right;">0.00</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</section>
+<section id="precision" class="level2">
+<h2 class="anchored" data-anchor-id="precision">Precision</h2>
+<p>Side by side comparison of the two ukraine codings. Go steal the crisis plot from the main paper.</p>
+</section>
+<section id="semantic-similarity" class="level2">
+<h2 class="anchored" data-anchor-id="semantic-similarity">Semantic Similarity</h2>
+<p>When it makes errors how close was it? Can do confusion matrix, but also could ask the LLM to autograde.</p>
+</section>
+</section>
+<section id="ablation-results" class="level1">
+<h1>Ablation Results</h1>
+</section>
+<section id="conclusion" class="level1">
+<h1>Conclusion</h1>
+<p>Next steps -Conditions -Multiple events per sentence</p>
+<p>The ICBe project is an example of right place at the right time. It built an ontology with very high coverage and detail that risk being too unwieldy to justify another large commitment in human coders on new documents. But it completed just in time for the appearance of open source large language models that can easily implement the coding at scale. Both the research investment in ontology design and human labeling of examples made translation to many shot prompt for an LLM a relatively simple exercise.</p>
+<p>Given the pace of technological advancement, we expect event projects to continue this trend of shifting human labor towards ontology design. Undervalued definition and codebook authoring has been rebranded as ‘prompt engineering’ for a new generation of systems with a LLM in the loop rather than a hired human coder. No matter the justification, this is a positive development for empiricism in social science. Definitions can now we chosen at the time of the analysis and rerun overnight rather than precommitted to years earlier in the cycle of grant raising, hiring, training, project management, and eventually publication.</p>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const isCodeAnnotation = (el) => {
+    for (const clz of el.classList) {
+      if (clz.startsWith('code-annotation-')) {                     
+        return true;
+      }
+    }
+    return false;
+  }
+  const clipboard = new window.ClipboardJS('.code-copy-button', {
+    text: function(trigger) {
+      const codeEl = trigger.previousElementSibling.cloneNode(true);
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+  });
+  clipboard.on('success', function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  });
+  function tippyHover(el, contentFn) {
+    const config = {
+      allowHTML: true,
+      content: contentFn,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start'
+    };
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      return note.innerHTML;
+    });
+  }
+      let selectedAnnoteEl;
+      const selectorForAnnotation = ( cell, annotation) => {
+        let cellAttr = 'data-code-cell="' + cell + '"';
+        let lineAttr = 'data-code-annotation="' +  annotation + '"';
+        const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+        return selector;
+      }
+      const selectCodeLines = (annoteEl) => {
+        const doc = window.document;
+        const targetCell = annoteEl.getAttribute("data-target-cell");
+        const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+        const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+        const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+        const lineIds = lines.map((line) => {
+          return targetCell + "-" + line;
+        })
+        let top = null;
+        let height = null;
+        let parent = null;
+        if (lineIds.length > 0) {
+            //compute the position of the single el (top and bottom and make a div)
+            const el = window.document.getElementById(lineIds[0]);
+            top = el.offsetTop;
+            height = el.offsetHeight;
+            parent = el.parentElement.parentElement;
+          if (lineIds.length > 1) {
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+            height = bottom - top;
+          }
+          if (top !== null && height !== null && parent !== null) {
+            // cook up a div (if necessary) and position it 
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            div.style.top = top - 2 + "px";
+            div.style.height = height + 4 + "px";
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            gutterDiv.style.top = top - 2 + "px";
+            gutterDiv.style.height = height + 4 + "px";
+          }
+          selectedAnnoteEl = annoteEl;
+        }
+      };
+      const unselectCodeLines = () => {
+        const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+        elementsIds.forEach((elId) => {
+          const div = window.document.getElementById(elId);
+          if (div) {
+            div.remove();
+          }
+        });
+        selectedAnnoteEl = undefined;
+      };
+      // Attach click handler to the DT
+      const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+      for (const annoteDlNode of annoteDls) {
+        annoteDlNode.addEventListener('click', (event) => {
+          const clickedEl = event.target;
+          if (clickedEl !== selectedAnnoteEl) {
+            unselectCodeLines();
+            const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+            if (activeEl) {
+              activeEl.classList.remove('code-annotation-active');
+            }
+            selectCodeLines(clickedEl);
+            clickedEl.classList.add('code-annotation-active');
+          } else {
+            // Unselect the line
+            unselectCodeLines();
+            clickedEl.classList.remove('code-annotation-active');
+          }
+        });
+      }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script>
+</div> <!-- /content -->
+
+
+
+</body></html>

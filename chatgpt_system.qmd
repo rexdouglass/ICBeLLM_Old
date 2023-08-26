@@ -1,0 +1,1157 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+## Quarto
+
+https://chat.openai.com/share/d17a31cc-ae67-4f0c-b350-e0754ae30298
+
+
+The task is prompt engineering for a text classifier. Carefully read the following training data. Develop rules that would lead a large language model to correctly classify new sentences. The rules must be clear and concise. The rules must generalize to new unseen sentences. The rules must be causal rather than based on shallow correlations.
+
+Codebook
+Background - Potentially useful context, but no codable actions from the crisis. Could refer to something before, during, or after the crisis.
+No Action - No codable action because explicit statement of inaction. Actors refrained from doing something.
+Error - Some sentence fragments are completely unintelligible, e.g. section headings. Code these as an error.
+1 - A single event. A single action. A single speech act, potentially about an action. A single thought, potentially about an act or speech.
+2 - Two distinct events
+3 - Three distinct events
+
+
+Here are more examples. Update the rules with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+Background - Potentially useful context, but no codable actions from the crisis. Could refer to something before, during, or after the crisis.
+No Action - No codable action because explicit statement of inaction. Actors refrained from doing something.
+Error - Some sentence fragments are completely unintelligible, e.g. section headings. Code these as an error.
+1 - A single event. A single action. A single speech act, potentially about an action. A single thought, potentially about an act or speech.
+2 - Two distinct events
+3 - Three distinct events
+
+
+
+
+Background:
+
+Provides context about a situation, the relationship between countries, or the history of an event, but doesn't describe a specific action taken during the crisis.
+Descriptions of oscillating relations, opinion dynamics, roles played by countries or entities, historical sequences without specifying particular actions.
+Sentences that give contextual or chronological sequences without direct actions or decisions.
+No Action:
+
+Explicit statements of inaction or non-involvement by actors.
+Mention of a state or situation remaining unchanged.
+Descriptions of what was not done, who wasn't involved, or the continuation of a status quo.
+1:
+
+Describes a singular event, action, response, decision, thought, or speech act.
+Highlights only one key event, even if it's described in some detail.
+Actions by a single entity without reference to a second distinct event.
+2:
+
+Mentions two distinct actions, decisions, or events either by the same actor or different actors.
+Two significant events highlighted in sequence or contrast.
+3:
+
+Mentions three distinct actions, events, or decisions either by the same actor or different actors.
+A complex sequence of events, actions, or decisions that involve multiple entities.
+Error:
+
+Sentence fragments that lack full context or are not complete in meaning.
+Headings or transitional phrases.
+Sentences that appear to introduce or conclude larger sections without providing a distinct event or action.
+Incomplete information or sentences that seem like they are part of a larger context.
+Observations:
+The "Background" code seems to lean heavily on historical, contextual, and relationship-oriented information that provides a setting for the crisis but doesn't delve into specific actions or decisions during the crisis.
+The "No Action" code captures moments where explicit inaction is described or where the status quo remains unchanged.
+Codes "1", "2", and "3" seem straightforward in counting the distinct actions or events in the sentence. However, it's important to differentiate between actions and context. For instance, background information leading up to an action still counts as one action.
+The "Error" code is reserved for fragmented information, incomplete sentences, or transitional phrases that don't provide meaningful details about the crisis.
+
+```{r}
+
+library(tidyverse)
+library(stringi)
+library(glue)
+
+events_agreed_long <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed_long.Rds")
+
+
+df <- events_agreed_long %>% 
+      filter(varname %in% c('sentence_events')) %>%
+      filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(value) %>%
+      filter(row_number()>40 & row_number()<=50) %>% #first 320 sentence 40 at a time
+      arrange(random) %>%
+      ungroup() %>%
+      mutate(row=row_number())
+  
+df %>% dplyr::select(correct_answer=value, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+
+
+```
+
+# Thought Type
+
+The task is prompt engineering for a text classifier. Carefully read the following training data. Develop rules that would lead a large language model to correctly classify new sentences. The rules must be clear and concise. The rules must generalize to new unseen sentences. The rules must be causal rather than based on shallow correlations.
+
+Codebook
+A) experienced the start of a crisis - The actor perceived the start of a crisis or thought that a crisis had now begun.
+B) experienced the end of a crisis - The actor perceived the end of a crisis or thought that a crisis had now ended.
+C) held a desire - The actor wishes that something would occur.
+D) held a fear - The actor is concerned that something would occur.
+E) held a perception of victory - The actor perceived a victory in the crisis for their side.
+F) held a perception of defeat - The actor perceived a defeat in the crisis for their side.
+G) held territorial aims - The actor had an interest about a territorial goal.
+H) held policy aims - The actor had a thought about a policy it hopes is carried out or not carried out.
+I) held regime change aims - The actor had an interest in another country’s government changing.
+J) held preemption aims - The actor had an interest in taking action before another actor takes action. 
+K) discovered or learned a fact - The actor was made aware of something happening in the world.
+L) became convinced or persuaded of a fact - The actor confirmed that something was or was not true.
+M) no thought
+
+
+
+Here are more examples. Update the rules with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+A) experienced the start of a crisis - The actor perceived the start of a crisis or thought that a crisis had now begun.
+B) experienced the end of a crisis - The actor perceived the end of a crisis or thought that a crisis had now ended.
+C) held a desire - The actor wishes that something would occur.
+D) held a fear - The actor is concerned that something would occur.
+E) held a perception of victory - The actor perceived a victory in the crisis for their side.
+F) held a perception of defeat - The actor perceived a defeat in the crisis for their side.
+G) held territorial aims - The actor had an interest about a territorial goal.
+H) held policy aims - The actor had a thought about a policy it hopes is carried out or not carried out.
+I) held regime change aims - The actor had an interest in another country’s government changing.
+J) held preemption aims - The actor had an interest in taking action before another actor takes action. 
+K) discovered or learned a fact - The actor was made aware of something happening in the world.
+L) became convinced or persuaded of a fact - The actor confirmed that something was or was not true.
+M) no thought
+
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#thinkkind
+
+df1 <- events_agreed_long %>% 
+      filter(varname %in% c('thinkkind')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(value) %>%
+      filter(row_number()>8 & row_number()<=10) %>% #first 320 sentence 40 at a time
+      arrange(random) %>%
+      ungroup() %>%
+      mutate(row=row_number())
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value = sum(varname %in% 'thinkkind')) %>%
+       filter(value==0) %>%
+       mutate(value="no thought") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>80 & row_number()<=100)  
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+
+  
+df %>% dplyr::select(correct_answer=value, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+
+
+```
+
+
+
+
+# Thought Actor
+
+https://chat.openai.com/share/d10b89b4-0e04-485f-8ce9-680601e9eb5e
+
+The task is prompt engineering for a text extractor. Carefully read the following training data. Develop rules that would lead a large language model to correctly extract the correct actor(s). The rules must be clear and concise. The rules must generalize to new unseen sentences. The rules must be causal rather than based on shallow correlations.
+
+Codebook
+A) $Actor(s)$ - Which actor or actors are having a thought in this event? One or more specific actors listed in alphabetical order and separated by semicolons.
+B) no thought actor
+
+
+Here are more examples. Update the rules for how to extract the correct actor(s) with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+A) $Actor(s)$ - Which actor or actors are having a thought in this event? One or more specific actors listed in alphabetical order and separated by semicolons.
+B) no thought actor
+
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#thinkkind
+
+i=80
+df1 <- events_agreed_wide %>% 
+      #filter(varname %in% c('thinkkind')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value=think_actor_a, thinkkind) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      filter(!is.na(value) & !is.na(thinkkind)) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(thinkkind) %>%
+      filter(row_number()>0 & row_number()<=10) %>% #1 for each actor
+      arrange(random) %>%
+      ungroup() %>%
+      filter(row_number()>i & row_number()<=(i+20)) %>% #iterate over in groups of 20
+      mutate(row=row_number())
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value = sum(varname %in% 'thinkkind')) %>%
+       filter(value==0) %>%
+       mutate(value="no thought actor") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>i & row_number()<=(i+20)  ) %>%
+       mutate(thinkkind="no thought")
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+
+df %>% dplyr::select(correct_answer=value, thought_type=thinkkind, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+
+
+```
+
+
+# Thought Sentence Rewrite 
+
+https://chat.openai.com/share/4c4fe513-9fde-4cb5-aa63-ecdd4b34ad6d
+
+Your task is extractive summarization. Rewrite the following sentences to remove information about the subjective thoughts of actors while leaving intact all of the objective information about actions and communications.
+
+Your task is prompt engineering. Write a prompt that would cause a large language model to solve the task of rewriting a sentence to remove references to subjective perceptions without removing or changing any of the objective information about actions and communications. Use the following paired examples to understand the task but assume they will not be shown to the LLM.
+
+
+To rewrite a sentence, remove any references to subjective perceptions while retaining all the objective information about actions and communications. Subjective perceptions refer to any personal feelings, beliefs, or interpretations about an event or situation. Objective information focuses on factual, unbiased data or actions without interpreting or assigning meaning to them.
+
+Rules:
+
+Remove any elements that describe how someone feels, believes, interprets, or perceives a situation.
+Retain objective information about actions, events, or communication.
+Try to maintain the original meaning of the sentence as closely as possible while adhering to the rules.
+It's essential to prioritize clarity and ensure that the sentence still makes sense after removing subjective perceptions.
+Examples for Guidance:
+
+Original: "The final plan that the ECOWAS mediators presented and which led to the termination of the crisis was one proposed by U.S. President Carter earlier."
+Rewritten: "The final plan that the ECOWAS mediators presented was one proposed by U.S. President Carter earlier."
+
+Original: "A crisis for Costa Rica was triggered on 12 September by Nicaraguan bombing of its territory and "hot pursuit" by Nicaraguan forces across the border."
+Rewritten: "On 12 September, Nicaraguan forces bombed Costa Rican territory and pursued across the border."
+
+Original: "Cambodia experienced a crisis because the Paris conference and pressure from the international community posed a threat to its political system, specifically, continued rule by the PRK."
+Rewritten: "Cambodia experienced a crisis due to the Paris conference and pressure from the international community on its political system and the rule by the PRK."
+
+Now, rewrite the given sentence to remove any references to subjective perceptions while retaining all the objective information.
+
+
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#thinkkind
+
+i=1
+df1 <- events_agreed_wide %>% 
+      #filter(varname %in% c('thinkkind')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value=think_actor_a, thinkkind) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      filter(!is.na(value) & !is.na(thinkkind)) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(thinkkind) %>%
+      filter(row_number()>0 & row_number()<=10) %>% #1 for each actor
+      arrange(random) %>%
+      ungroup() %>%
+      filter(row_number()>i & row_number()<=(i+20)) %>% #iterate over in groups of 20
+      mutate(row=row_number())
+
+
+df1 %>% dplyr::select(row, thought_actor=value, thought_type=thinkkind, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+
+df1 %>% dplyr::select(row, sentence=sentence_span_text)
+
+temp <- data.frame(
+  stringsAsFactors = FALSE,
+               row = c(1L,1L,2L,2L,3L,3L,4L,4L,
+                       5L,5L,6L,6L,7L,7L,8L,8L,9L,9L,10L,10L,11L,
+                       11L,12L,12L,13L,13L,14L,14L,15L,15L,16L,16L,17L,
+                       17L,18L,18L,19L,19L,20L,20L),
+              type = c("with thoughts",
+                       "without subjective thoughts","with thoughts",
+                       "without subjective thoughts","with thoughts","without subjective thoughts",
+                       "with thoughts","without subjective thoughts",
+                       "with thoughts","without subjective thoughts","with thoughts",
+                       "without subjective thoughts","with thoughts",
+                       "without subjective thoughts","with thoughts",
+                       "without subjective thoughts","with thoughts","without subjective thoughts",
+                       "with thoughts","without subjective thoughts",
+                       "with thoughts","without subjective thoughts","with thoughts",
+                       "without subjective thoughts","with thoughts",
+                       "without subjective thoughts","with thoughts",
+                       "without subjective thoughts","with thoughts",
+                       "without subjective thoughts","with thoughts","without subjective thoughts",
+                       "with thoughts","without subjective thoughts",
+                       "with thoughts","without subjective thoughts","with thoughts",
+                       "without subjective thoughts","with thoughts",
+                       "without subjective thoughts"),
+          sentence = c("The final plan that the ECOWAS mediators presented and which led to the termination of the crisis was one proposed by U.S. President Carter earlier.",
+                       "The final plan that the ECOWAS mediators presented was one proposed by U.S. President Carter earlier.",
+                       "A crisis for Costa Rica was triggered on 12 September by Nicaraguan bombing of its territory and \"hot pursuit\" by Nicaraguan forces across the border.",
+                       "On 12 September, Nicaraguan forces bombed Costa Rican territory and pursued across the border.",
+                       "Cambodia experienced a crisis because the Paris conference and pressure from the international community posed a threat to its political system, specifically, continued rule by the PRK.",
+                       "Cambodia experienced a crisis due to the Paris conference and pressure from the international community on its political system and the rule by the PRK.",
+                       "The announcement of the Arab Summit Conference decisions on 16 January triggered a crisis for Israel, which perceived a grave threat to its vital water supplies.",
+                       "The Arab Summit Conference decisions were announced on 16 January, impacting Israel's water supplies.",
+                       "The termination for both crisis actors was his formal resignation on 1 June 1947.",
+                       "The crisis ended with his formal resignation on 1 June 1947.",
+                       "This triggered a crisis for Greece.",
+                       "A crisis occurred in Greece.",
+                       "On 20 June Sa'udi Arabia created an air defense zone, blocking further Iranian incursions into its airspace and ending its crisis.",
+                       "On 20 June, Saudi Arabia created an air defense zone, blocking further Iranian incursions into its airspace.",
+                       "Ugandan troops reportedly crossed the border first, near the town of Busia, triggering a crisis for Kenya.",
+                       "Ugandan troops crossed the border near the town of Busia, causing a situation in Kenya.",
+                       "The crisis ended in March 1983 when both adversaries formally referred the dispute to mediation by the UN Secretary-General.",
+                       "The crisis ended in March 1983 when the dispute was referred to mediation by the UN Secretary-General.",
+                       "South Vietnam, perceiving a threat of a further loss of territory, responded the same day with defensive fighting.",
+                       "South Vietnam responded with defensive fighting due to potential territorial threats.",
+                       "The bus incident and Dayan's warning also triggered a crisis for Jordan: King Hussein stated that on that day he perceived a threat of full-scale invasion from Israel.",
+                       "The bus incident and Dayan's warning impacted Jordan; King Hussein stated there was a threat from Israel.",
+                       "These massacres created an international problem that immediately involved the UN. A crisis for Burundi was triggered on 22 January 1964 when it was reported that troops of the Rwanda army had violated Burundi territory and \"massacred\" a number of Burundi inhabitants in the border area.",
+                       "A situation for Burundi arose on 22 January 1964 when troops of the Rwanda army crossed into Burundi territory and there were reports of attacks on Burundi inhabitants in the border area.","This crisis came to an end on 23 February 1998.",
+                       "The crisis ended on 23 February 1998.",
+                       "The British decided that the situation could be restored only by force.",
+                       "The British decided to use force to address the situation.",
+                       "Evidence of a Libya military buildup and the perception in Khartoum and Cairo, by 11 February, of a Libyan plan to overthrow the Numeiri regime triggered a crisis for Sudan and Egypt.",
+                       "Evidence of a Libya military buildup on 11 February led to a crisis for Sudan and Egypt.",
+                       "It also generated a crisis for Algeria, where Polisario bases were located.",
+                       "A crisis occurred in Algeria due to the location of Polisario bases.",
+                       "The trigger for Iraq was a press conference on 28 November 1959 where the Shah described the status quo concerning the Shatt-al-Arab as \"intolerable.\" Prime Minister Qassem's response, the trigger for Iran, was a reiteration of Iraq's claim to the waterway on 2 December.",
+                       "The situation for Iraq was influenced by a press conference on 28 November 1959, followed by Prime Minister Qassem's response on 2 December.",
+                       "The Anglo-French Plan, announced on the 19th, called for the immediate transfer to Germany of Sudeten areas with over 50 percent German inhabitants and the acceptance by Czechoslovakia of a neutralized status, which would require the abrogation of its treaties with France and the USSR. That day a crisis was triggered for the Soviet Union when President Benes requested USSR affirmation of the Soviet-Czechoslovak Pact.",
+                       "The Anglo-French Plan was announced on the 19th, with implications for the Soviet-Czechoslovak Pact and the Soviet Union when President Benes made a request.",
+                       "This triggered a crisis for China and also for the Japanese government--the invasion being an act by the Japanese army without previous sanction by the civil authority, which was not interested at that time in war with China.",
+                       "A situation arose for both China and the Japanese government following actions by the Japanese army.",
+                       "On 21 November, as Syrian forces pushed toward south Lebanon, Israel perceived a crisis, recognizing that Syria might break the tacit Red Line agreement, thereby undermining Israel's influence in Lebanon.",
+                       "On 21 November, Syrian forces moved towards south Lebanon, impacting Israel's standing in Lebanon.")
+)
+
+temp %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+```
+
+
+
+# Speech
+
+https://chat.openai.com/share/c82a6207-c96f-4b52-8d9f-5f66984b32a2
+
+The task is prompt engineering for a text classifier. Carefully read the following training data. Develop rules that would lead a large language model to correctly classify new sentences. The rules must be clear and concise. The rules must generalize to new unseen sentences. The rules must be causal rather than based on shallow correlations.
+
+Codebook
+A) an ultimatum - The actor will take an action unless the recipient fulfills a certain condition.
+B) an offer with conditions - The actor will take an action if the recipient fulfills a certain condition. This not include actually fulfilling the condition, simply communicating that a condition can be fulfilled.
+C) an offer without conditions - The actor makes an offer to do or give something in the future regardless of the recipient’s actions.
+D) an expression of intent - The actor makes a claim about a desire to take action in the future. The goal is to communicate something that may happen in the future.
+E) an expression of threat - The actor makes a claim they will take an undesired action in the future. The intent of the threat is to convince another actor to change their planned course of action.
+F) an expression of promise - The actor makes a claim they will take a desired action in the future. This is distinct from a formally signed agreement that represents an interaction between two actors.
+G) an expression of demand - Making a statement that requires another actor do something.
+H) an expression of appeal / request - Making a statement that asks another actor for something. This includes positive requests like asking for aid or negative requests like withdrawing troops.
+I) an expression of accusation - Making a claim that another actor did something in the past.
+J) an expression of rejection / denial - Indication of a refusal to comply with a previously made statement. This merely represents a statement or speech act, not formally leaving an actual agreement.
+K) an expression of acceptance - Indication of a willingness to comply with a previously made statement.
+L) an expression of disapproval / condemnation - Expressing a negative reaction to a past event. 
+M) an expression of praise - Expressing a positive reaction to a past event. 
+N) no communication
+
+Here are more examples. Update the rules with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+A) an ultimatum - The actor will take an action unless the recipient fulfills a certain condition.
+B) an offer with conditions - The actor will take an action if the recipient fulfills a certain condition. This not include actually fulfilling the condition, simply communicating that a condition can be fulfilled.
+C) an offer without conditions - The actor makes an offer to do or give something in the future regardless of the recipient’s actions.
+D) an expression of intent - The actor makes a claim about a desire to take action in the future. The goal is to communicate something that may happen in the future.
+E) an expression of threat - The actor makes a claim they will take an undesired action in the future. The intent of the threat is to convince another actor to change their planned course of action.
+F) an expression of promise - The actor makes a claim they will take a desired action in the future. This is distinct from a formally signed agreement that represents an interaction between two actors.
+G) an expression of demand - Making a statement that requires another actor do something.
+H) an expression of appeal / request - Making a statement that asks another actor for something. This includes positive requests like asking for aid or negative requests like withdrawing troops.
+I) an expression of accusation - Making a claim that another actor did something in the past.
+J) an expression of rejection / denial - Indication of a refusal to comply with a previously made statement. This merely represents a statement or speech act, not formally leaving an actual agreement.
+K) an expression of acceptance - Indication of a willingness to comply with a previously made statement.
+L) an expression of disapproval / condemnation - Expressing a negative reaction to a past event. 
+M) an expression of praise - Expressing a positive reaction to a past event. 
+N) no communication
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#thinkkind
+
+df1 <- events_agreed_long %>% 
+      filter(varname %in% c('sayintkind')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(value) %>%
+      filter(row_number()>10 & row_number()<=12) %>% #first 320 sentence 40 at a time
+      arrange(random) %>%
+      ungroup() %>%
+      mutate(row=row_number())
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value = sum(varname %in% 'sayintkind')) %>%
+       filter(value==0) %>%
+       mutate(value="no communication") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>100 & row_number()<=120)  
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+
+  
+df %>% dplyr::select(correct_answer=value, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+
+
+```
+
+# Speech Speaker
+
+
+https://chat.openai.com/share/352f6a29-1840-4b2e-b4c1-9872f2c363aa
+
+The task is prompt engineering for a text extractor. Carefully read the following training data. Develop rules that would lead a large language model to correctly extract the correct speaker(s). The rules must be clear and concise. The rules must generalize to new unseen sentences. The rules must be causal rather than based on shallow correlations.
+
+Codebook
+A) $speakers(s)$ - Which actor or actors are initiating the communication in this event? One or more specific actors listed in alphabetical order and separated by semicolons.
+B) no speakers
+
+
+Here are more examples. Update the rules for how to extract the correct speaker(s) with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+A) $speakers(s)$ - Which actor or actors are initiating the communication in this event? One or more specific actors listed in alphabetical order and separated by semicolons.
+B) no speaker
+
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#say_actor_a
+
+i=80
+df1 <- events_agreed_wide %>% 
+      #filter(varname %in% c('thinkkind')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value=say_actor_a, sayintkind) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      filter(!is.na(value) & !is.na(sayintkind)) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(sayintkind) %>%
+      filter(row_number()>0 & row_number()<=20) %>% #This is effectively downsampling so they show up an equal number of times in the next bit
+      arrange(random) %>%
+      ungroup() %>%
+      filter(row_number()>i & row_number()<=(i+20)) %>% #iterate over in groups of 20
+      mutate(row=row_number())
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value = sum(varname %in% 'sayintkind')) %>%
+       filter(value==0) %>%
+       mutate(value="no speaker") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>i & row_number()<=(i+20)  ) %>%
+       mutate(sayintkind="no thought")
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+
+df %>% dplyr::select(correct_answer=value, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+
+
+```
+
+
+
+# Speech Audience
+
+
+https://chat.openai.com/share/67f4d53e-4166-4ea7-9137-af2a3ced6f0e
+
+The task is prompt engineering for a text extractor. Carefully read the following training data. Develop rules that would lead a large language model to correctly extract the correct audience(s). The rules must be clear and concise. The rules must generalize to new unseen sentences. The rules must be causal rather than based on shallow correlations.
+
+Codebook
+A) $audience(s)$ - Which actor or actors are the communication directed toward in this event? One or more specific actors listed in alphabetical order and separated by semicolons.
+B) no audience
+
+
+Here are more examples. Update the rules for how to extract the correct speaker(s) with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+A) $audience(s)$ - Which actor or actors are the communication directed toward in this event? One or more specific actors listed in alphabetical order and separated by semicolons.
+B) no audience
+
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#say_actor_b
+
+i=80
+df1 <- events_agreed_wide %>% 
+      #filter(varname %in% c('thinkkind')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value=say_actor_b, sayintkind) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      filter(!is.na(value) & !is.na(sayintkind)) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(sayintkind) %>%
+      filter(row_number()>0 & row_number()<=20) %>% #This is effectively downsampling so they show up an equal number of times in the next bit
+      arrange(random) %>%
+      ungroup() %>%
+      filter(row_number()>i & row_number()<=(i+20)) %>% #iterate over in groups of 20
+      mutate(row=row_number())
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value = sum(varname %in% 'sayintkind')) %>%
+       filter(value==0) %>%
+       mutate(value="no audience") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>i & row_number()<=(i+20)  ) %>%
+       mutate(sayintkind="no thought")
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+
+df %>% dplyr::select(correct_answer=value, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+
+
+```
+
+# act_cooperative
+
+https://chat.openai.com/share/22152a92-634d-44c9-b67b-a17ac81604f8
+
+The task is prompt engineering for text classification. Carefully read the following training data. Develop rules that would lead a large language model to correctly classify sentences. The rules must be clear and concise. The rules must be causal rather than based on shallow correlations. The rules must generalize to new unseen sentences.
+
+Codebook
+---Government
+A) leadership change - Election, resignation, or appointment. An election or other peaceful transition in top executive leadership of the country. This does not include a change in lower level leadership like ambassadors or diplomats.
+B) institutions change - Peaceful regime change from one kind of government to another. This involves a change in the entire regime as opposed to just the top leadership and does not include protests or demands for secession.
+---By Civilians
+C) end protest - Ended an act of organized public dissent.
+D) end strike - Ended a protest that took the form of refusing to work. 
+E) end riot - Ended organized group violence. 
+---Against Civilians
+F) provide rights - The government increased the provision of rights to their citizens through things like expanded political or civil rights. 
+G) reduce terrorism - The actor reduced indiscriminate attacks on civilians designed to incite fear.
+H) reduce human rights violation - The actor reduced violations of another actor’s basic human rights.
+I) reduce mass killing - The actor reduced indiscriminate killing of another group’s population.
+J) evacuate -The actor withdrew civilians.
+K) no cooperative acts by unarmed actors
+
+Here are more examples. Update the rules for how to correctly classify sentences with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+---Government
+A) leadership change - Election, resignation, or appointment. An election or other peaceful transition in top executive leadership of the country. This does not include a change in lower level leadership like ambassadors or diplomats.
+B) institutions change - Peaceful regime change from one kind of government to another. This involves a change in the entire regime as opposed to just the top leadership and does not include protests or demands for secession.
+---By Civilians
+C) end protest - Ended an act of organized public dissent.
+D) end strike - Ended a protest that took the form of refusing to work. 
+E) end riot - Ended organized group violence. 
+---Against Civilians
+F) provide rights - The government increased the provision of rights to their citizens through things like expanded political or civil rights. 
+G) reduce terrorism - The actor reduced indiscriminate attacks on civilians designed to incite fear.
+H) reduce human rights violation - The actor reduced violations of another actor’s basic human rights.
+I) reduce mass killing - The actor reduced indiscriminate killing of another group’s population.
+J) evacuate -The actor withdrew civilians.
+K) no cooperative acts by unarmed actors
+
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#act_cooperative
+
+i=80
+df1 <- events_agreed_long %>% 
+      filter(varname %in% c('act_cooperative')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(value) %>%
+      filter(row_number()>0 & row_number()<=10) %>% #downsample
+      arrange(random) %>%
+      ungroup() %>%
+      mutate(row=row_number()) %>%
+      filter(row_number()>i & row_number()<=(i+20)  ) 
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value = sum(varname %in% 'act_cooperative')) %>%
+       filter(value==0) %>%
+       mutate(value="no cooperative domestic civilian act") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>i & row_number()<=(i+20)  ) %>%
+       mutate(act_cooperative="no cooperative domestic civilian act")
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+
+df %>% dplyr::select(correct_answer=value, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+```
+
+# act_uncooperative
+
+https://chat.openai.com/share/e3daf232-6f84-49e2-ab26-a4677b8e4d42
+
+The task is prompt engineering for text classification. Carefully read the following training data. Develop rules that would lead a large language model to correctly classify sentences. The rules must be clear and concise. The rules must be causal rather than based on shallow correlations. The rules must generalize to new unseen sentences.
+
+Codebook
+---Government
+A) coup - An attempt was made to overthrow the current regime and/or its leaders.
+B) assassination - An attempt was made to murder the current regime leader.
+---By Civilians
+C) protest - Act of organized public dissent.
+D) strike - Protest that takes the form of refusing to work.
+E) riot - Organized group violence.
+---Against Civilians
+F) restrict rights - The actor took away or challenged the rights of another group of people. This could include the passage of restrictive laws or suspension of previously allowed rights. Organized groups rioting against the government should be coded here.
+G) terrorism - The actor engaged in the indiscriminate killing of civilians to incite fear and achieve a political goal.
+H) human rights violation - The actor violated the basic human rights of a group of people.
+I) mass killing - Intentional and indiscriminate murder by the government of a group of civilians. This is distinct from accusations of genocide since the actor has to be the one committing the genocide, not the one being accused.
+---None of the Above
+J) no uncooperative acts by unarmed actors
+
+Here are more examples. Update the rules for how to correctly classify sentences with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+---Government
+A) coup - An attempt was made to overthrow the current regime and/or its leaders.
+B) assassination - An attempt was made to murder the current regime leader.
+---By Civilians
+C) protest - Act of organized public dissent.
+D) strike - Protest that takes the form of refusing to work.
+E) riot - Organized group violence.
+---Against Civilians
+F) restrict rights - The actor took away or challenged the rights of another group of people. This could include the passage of restrictive laws or suspension of previously allowed rights. Organized groups rioting against the government should be coded here.
+G) terrorism - The actor engaged in the indiscriminate killing of civilians to incite fear and achieve a political goal.
+H) human rights violation - The actor violated the basic human rights of a group of people.
+I) mass killing - Intentional and indiscriminate murder by the government of a group of civilians. This is distinct from accusations of genocide since the actor has to be the one committing the genocide, not the one being accused.
+---None of the Above
+J) no uncooperative acts by unarmed actors
+
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#act_uncooperative
+
+i=80
+df1 <- events_agreed_long %>% 
+      filter(varname %in% c('act_uncooperative')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(value) %>%
+      filter(row_number()>0 & row_number()<=10) %>% #downsample
+      arrange(random) %>%
+      ungroup() %>%
+      mutate(row=row_number()) %>%
+      filter(row_number()>i & row_number()<=(i+20)  ) 
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value = sum(varname %in% 'act_uncooperative')) %>%
+       filter(value==0) %>%
+       mutate(value="no uncooperative acts by unarmed actors") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>i & row_number()<=(i+20)  ) %>%
+       mutate(act_cooperative="no uncooperative acts by unarmed actors")
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+df %>% dplyr::select(correct_answer=value, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+```
+
+
+# interact_decreasecoop
+
+https://chat.openai.com/share/793db13c-e07d-4785-8bcd-59e8f4858779
+
+The task is prompt engineering for text classification. Carefully read the following training data. Develop rules that would lead a large language model to correctly classify sentences. The rules must be clear and concise. The rules must be causal rather than based on shallow correlations. The rules must generalize to new unseen sentences.
+
+Codebook
+---Government
+A) break off negotiations - The actor cuts off ongoing negotiations with another actor.
+B) withdraw diplomats - The actor physically removes its diplomats/representatives from another country.
+---Violate Agreement
+C) violate terms of agreement - The actor took an action it had formally and legally agreed not to take. Conversely, the actor may have refused to take an action that it had formally and legally agreed to take.
+---Annul Agreement
+D) political succession - The actor declared itself independent and sovereign from some larger polity that previously held claim to it.
+E) leave alliance - The actor left a military alliance it had with another country.
+F) terminate treaty - The actor tore down a treaty such that none of its provisions were considered legally binding.
+---Cease Mutual Cooperation
+G) end economic cooperation - The actor halted economic cooperation or imposed economic sanctions.
+H) end military cooperation - The actor ceased working with another actor on military matters, such as the mutual transfer of military equipment.
+I) end intelligence cooperation - The actor ceased working with another actor on intelligence matters, such as the mutual transfer of intelligence.
+J) end unspecified cooperation - The actor ceased working with another actor on unspecified of ambiguous matters.
+---End Aid
+K) end economic aid - The actor ceased providing economic aid.
+L) end humanitarian aid - The actor ceased providing humanitarian aid.
+M) end military aid - The actor ceased providing military aid.
+N) end unspecified aid - The actor ceased providing an undefined or ambiguous type of aid.
+---Added Post-Coding
+O) deployment to area - No military personnel were moved from one location to another in preparation for battle or work.
+P) end access - Prevent access to an area or across a border, usually for civilian populations. Distinct from a military blockade.
+Q) expel - The actor forced individuals out of a specific geographic area.
+R) propaganda - The actor undertook a systematic effort to spread information to a general audience for the purpose of promoting some cause.
+S) imprison - The actor detained and confined specific individuals, often in a prison.
+-None of the Above
+T) no uncooperative interactions by unarmed actors
+
+Here are more examples. Update the rules for how to correctly classify sentences with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+---Government
+A) break off negotiations - The actor cuts off ongoing negotiations with another actor.
+B) withdraw diplomats - The actor physically removes its diplomats/representatives from another country.
+---Violate Agreement
+C) violate terms of agreement - The actor took an action it had formally and legally agreed not to take. Conversely, the actor may have refused to take an action that it had formally and legally agreed to take.
+---Annul Agreement
+D) political succession - The actor declared itself independent and sovereign from some larger polity that previously held claim to it.
+E) leave alliance - The actor left a military alliance it had with another country.
+F) terminate treaty - The actor tore down a treaty such that none of its provisions were considered legally binding.
+---Cease Mutual Cooperation
+G) end economic cooperation - The actor halted economic cooperation or imposed economic sanctions.
+H) end military cooperation - The actor ceased working with another actor on military matters, such as the mutual transfer of military equipment.
+I) end intelligence cooperation - The actor ceased working with another actor on intelligence matters, such as the mutual transfer of intelligence.
+J) end unspecified cooperation - The actor ceased working with another actor on unspecified of ambiguous matters.
+---End Aid
+K) end economic aid - The actor ceased providing economic aid.
+L) end humanitarian aid - The actor ceased providing humanitarian aid.
+M) end military aid - The actor ceased providing military aid.
+N) end unspecified aid - The actor ceased providing an undefined or ambiguous type of aid.
+---Added Post-Coding
+O) deployment to area - No military personnel were moved from one location to another in preparation for battle or work.
+P) end access - Prevent access to an area or across a border, usually for civilian populations. Distinct from a military blockade.
+Q) expel - The actor forced individuals out of a specific geographic area.
+R) propaganda - The actor undertook a systematic effort to spread information to a general audience for the purpose of promoting some cause.
+S) imprison - The actor detained and confined specific individuals, often in a prison.
+-None of the Above
+T) no uncooperative interactions by unarmed actors
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#interact_decreasecoop
+
+i=80
+df1 <- events_agreed_long %>% 
+      filter(varname %in% c('interact_decreasecoop')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value_normalized) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(value_normalized) %>%
+      filter(row_number()>0 & row_number()<=5) %>% #downsample
+      arrange(random) %>%
+      ungroup() %>%
+      mutate(row=row_number()) %>%
+      filter(row_number()>i & row_number()<=(i+20)  ) 
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value_normalized = sum(varname %in% 'interact_decreasecoop')) %>%
+       filter(value_normalized==0) %>%
+       mutate(value_normalized="no uncooperative interactions by unarmed actors") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>i & row_number()<=(i+20)  ) %>%
+       mutate(act_cooperative="no uncooperative interactions by unarmed actors")
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+df %>% dplyr::select(correct_answer=value_normalized, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+```
+
+# interact_increasecoop
+
+https://chat.openai.com/share/5768b59b-e3f5-463d-8fb1-f2072e6bcdaf
+
+The task is prompt engineering for text classification. Carefully read the following training data. Develop rules that would lead a large language model to correctly classify sentences. The rules must be clear and concise. The rules must be causal rather than based on shallow correlations. The rules must generalize to new unseen sentences.
+
+Codebook
+-Diplomacy-
+A) discussion - Informal diplomacy that does not involved in person or face to face meetings between political leaders or representatives.
+B) meeting - More formal diplomacy that involves in person or face to face meetings between political leaders or representatives.
+C) mediation - The actor engaged in intervention in a dispute with the intent to resolve it. The initiator is the mediating actor and the belligerents are the recipients of that mediation.
+D) natural conclusion of diplomacy - Diplomacy concluded in a natural manner. 
+-Legal Agreements-
+E) sign formal agreement - The actor agreed to a legally binding agreement with another actor(s).
+F) settle dispute - The actor came to an informal arrangement that ended the dispute on satisfactory terms.
+G) join war on behalf of - The actor joined the conflict to aid an ally.
+H) formal military ally - Formal treaty between countries for security cooperation.
+I) mutual defense pact - Pact that requires countries to come to each other’s aid militarily if either is attacked by a third party.
+-Mutual Cooperation-
+J) economic cooperation - The actor and the target exchanged economic goods or services.
+K) military cooperation - The actor and the target exchanged military goods or services.
+L) intelligence cooperation - The actor and the target provided or exchanged intelligence, information, data, or knowledge.
+M) unspecified cooperation - The actor and the target exchanged unspecified or ambiguously specified goods or services.
+-Directed Aid and Support-
+N) general political support - Support that may not be material aid, but instead an expression of support or assistance
+O) economic aid - The voluntary transfer of economic resources from one country to another.
+P) humanitarian aid - The voluntary transfer of material and logistic assistance to people in need, often aiming to alleviate suffering from a disaster.
+Q) military aid - The voluntary transfer of material to assist a country in its defense efforts.
+R) unspecified aid - The voluntary transfer of unspecified or ambiguous material from one country to another.
+-Added Post-Coding-
+S) inspections - The actor allowed inspections or investigations.
+T) release captives - The actor released hostages, prisoners, or other captives.
+U) cede territory - The actor formally transfers or surrenders territory.
+V) allow access - The actor allowed access to an area or across a border, usually for civilian populations. Distinct from ending a military blockade. 
+W) no cooperative interactions by unarmed actors
+
+Here are more examples. Update the rules for how to correctly classify sentences with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+-Diplomacy-
+A) discussion - Informal diplomacy that does not involved in person or face to face meetings between political leaders or representatives.
+B) meeting - More formal diplomacy that involves in person or face to face meetings between political leaders or representatives.
+C) mediation - The actor engaged in intervention in a dispute with the intent to resolve it. The initiator is the mediating actor and the belligerents are the recipients of that mediation.
+D) natural conclusion of diplomacy - Diplomacy concluded in a natural manner. 
+-Legal Agreements-
+E) sign formal agreement - The actor agreed to a legally binding agreement with another actor(s).
+F) settle dispute - The actor came to an informal arrangement that ended the dispute on satisfactory terms.
+G) join war on behalf of - The actor joined the conflict to aid an ally.
+H) formal military ally - Formal treaty between countries for security cooperation.
+I) mutual defense pact - Pact that requires countries to come to each other’s aid militarily if either is attacked by a third party.
+-Mutual Cooperation-
+J) economic cooperation - The actor and the target exchanged economic goods or services.
+K) military cooperation - The actor and the target exchanged military goods or services.
+L) intelligence cooperation - The actor and the target provided or exchanged intelligence, information, data, or knowledge.
+M) unspecified cooperation - The actor and the target exchanged unspecified or ambiguously specified goods or services.
+-Directed Aid and Support-
+N) general political support - Support that may not be material aid, but instead an expression of support or assistance
+O) economic aid - The voluntary transfer of economic resources from one country to another.
+P) humanitarian aid - The voluntary transfer of material and logistic assistance to people in need, often aiming to alleviate suffering from a disaster.
+Q) military aid - The voluntary transfer of material to assist a country in its defense efforts.
+R) unspecified aid - The voluntary transfer of unspecified or ambiguous material from one country to another.
+-Added Post-Coding-
+S) inspections - The actor allowed inspections or investigations.
+T) release captives - The actor released hostages, prisoners, or other captives.
+U) cede territory - The actor formally transfers or surrenders territory.
+V) allow access - The actor allowed access to an area or across a border, usually for civilian populations. Distinct from ending a military blockade. 
+W) no cooperative interactions by unarmed actors
+
+
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#interact_increasecoop
+
+i=80
+df1 <- events_agreed_long %>% 
+      filter(varname %in% c('interact_increasecoop')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value_normalized) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(value_normalized) %>%
+      filter(row_number()>0 & row_number()<=5) %>% #downsample
+      arrange(random) %>%
+      ungroup() %>%
+      mutate(row=row_number()) %>%
+      filter(row_number()>i & row_number()<=(i+20)  ) 
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value_normalized = sum(varname %in% 'interact_increasecoop')) %>%
+       filter(value_normalized==0) %>%
+       mutate(value_normalized="no cooperative interactions by unarmed actors") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>i & row_number()<=(i+20)  ) %>%
+       mutate(act_cooperative="no cooperative interactions by unarmed actors")
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+df %>% dplyr::select(correct_answer=value_normalized, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+```
+
+# interact_escalate
+
+https://chat.openai.com/share/9480921b-669f-4084-aa7f-f1aa844694a8
+
+The task is prompt engineering for text classification. Carefully read the following training data. Develop rules that would lead a large language model to correctly classify sentences. The rules must be clear and concise. The rules must be causal rather than based on shallow correlations. The rules must generalize to new unseen sentences.
+
+Codebook
+---Preparation
+A) raise in alert - The actor increased the state of readiness of its armed forces. This occurred as part of an interaction with another actor.
+B) mobilization - The actor prepared military forces for conflict. This occurred as part of an interaction with another actor.
+C) fortify - The actor strengthened or built up their military forces. This occurred as part of an interaction with another actor.
+D) exercise - The actor engaged in military training or practice. This occurred as part of an interaction with another actor.
+E) weapons test - The actor engaged in testing weaponry to determine weapon effectiveness. This occurred as part of an interaction with another actor.
+---Maneuver
+F) deployment to area - Troops were moved one location to another. This does not involve actual direct combat since that would be an interaction, not a unilateral action.
+G) show of force - The actor demonstrated its military capacity as warning or to intimidate. This occurred as part of an interaction with another actor.
+H) blockade - The actor restricted the target’s movement, mobility, or access outside of direct combat. This occurred as part of an interaction with another actor.
+I) border violation - The actor threatened the target’s territorial sovereignty or control. This occurred as part of an interaction with another actor.
+J) no fly zone - The actor restricted the target’s movement, mobility, or access in the air outside of direct combat. This occurred as part of an interaction with another actor.
+---Combat
+K) battle/clash - The actor engaged in conflict with the target. This occurred as part of an interaction with another actor.
+L) attack - The actor initiated conflict with the target. This occurred as part of an interaction with another actor.
+M) invasion/occupation - The actor entered with the intention of taking over some area of the target's territory. This is distinct from a speech act declaring an intent or desire to invade and instead only includes the actual invasion itself.
+N) bombard - The actor bombed the target. This occurred as part of an interaction with another actor.
+O) declaration of war - The actor declared war against its target for the first time. This occurred as part of an interaction with another actor.
+P) join ongoing war - The actor joined an ongoing war between other parties. The ‘receiver’ in this instance is the enemy/opponents of the actor.
+Q) continuation of previous fighting - Fighting picked back up or re-emerged. This occurred as part of an interaction with another actor.
+---Autonomy 
+R) assert political control over - The actor reasserted control over a territory where it previously had strong control (ie a colonial power). This occurred as part of an interaction with another actor.
+S) annex - The actor annexed a portion of its territory by giving up its claim of sovereignty. This occurred as part of an interaction with another actor.
+T) assert autonomy against - The actor reasserted its sovereignty and internal control vis-a-vis the target/recipient
+U) no escalatory interaction by armed actors
+
+Here are more examples. Update the rules for how to correctly classify sentences with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+---Preparation
+A) raise in alert - The actor increased the state of readiness of its armed forces. This occurred as part of an interaction with another actor.
+B) mobilization - The actor prepared military forces for conflict. This occurred as part of an interaction with another actor.
+C) fortify - The actor strengthened or built up their military forces. This occurred as part of an interaction with another actor.
+D) exercise - The actor engaged in military training or practice. This occurred as part of an interaction with another actor.
+E) weapons test - The actor engaged in testing weaponry to determine weapon effectiveness. This occurred as part of an interaction with another actor.
+---Maneuver
+F) deployment to area - Troops were moved one location to another. This does not involve actual direct combat since that would be an interaction, not a unilateral action.
+G) show of force - The actor demonstrated its military capacity as warning or to intimidate. This occurred as part of an interaction with another actor.
+H) blockade - The actor restricted the target’s movement, mobility, or access outside of direct combat. This occurred as part of an interaction with another actor.
+I) border violation - The actor threatened the target’s territorial sovereignty or control. This occurred as part of an interaction with another actor.
+J) no fly zone - The actor restricted the target’s movement, mobility, or access in the air outside of direct combat. This occurred as part of an interaction with another actor.
+---Combat
+K) battle/clash - The actor engaged in conflict with the target. This occurred as part of an interaction with another actor.
+L) attack - The actor initiated conflict with the target. This occurred as part of an interaction with another actor.
+M) invasion/occupation - The actor entered with the intention of taking over some area of the target's territory. This is distinct from a speech act declaring an intent or desire to invade and instead only includes the actual invasion itself.
+N) bombard - The actor bombed the target. This occurred as part of an interaction with another actor.
+O) declaration of war - The actor declared war against its target for the first time. This occurred as part of an interaction with another actor.
+P) join ongoing war - The actor joined an ongoing war between other parties. The ‘receiver’ in this instance is the enemy/opponents of the actor.
+Q) continuation of previous fighting - Fighting picked back up or re-emerged. This occurred as part of an interaction with another actor.
+---Autonomy 
+R) assert political control over - The actor reasserted control over a territory where it previously had strong control (ie a colonial power). This occurred as part of an interaction with another actor.
+S) annex - The actor annexed a portion of its territory by giving up its claim of sovereignty. This occurred as part of an interaction with another actor.
+T) assert autonomy against - The actor reasserted its sovereignty and internal control vis-a-vis the target/recipient
+U) no escalatory interaction by armed actors
+
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#interact_increasecoop
+
+i=80
+df1 <- events_agreed_long %>% 
+      filter(varname %in% c('interact_escalate')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value_normalized) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(value_normalized) %>%
+      filter(row_number()>0 & row_number()<=5) %>% #downsample
+      arrange(random) %>%
+      ungroup() %>%
+      mutate(row=row_number()) %>%
+      filter(row_number()>i & row_number()<=(i+20)  ) 
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value_normalized = sum(varname %in% 'interact_escalate')) %>%
+       filter(value_normalized==0) %>%
+       mutate(value_normalized="no escalatory interaction by armed actors") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>i & row_number()<=(i+20)  ) %>%
+       mutate(act_cooperative="no escalatory interaction by armed actors")
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+df %>% dplyr::select(correct_answer=value_normalized, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+```
+
+
+# interact_deescalate
+
+https://chat.openai.com/share/5caae051-3478-4215-9cd3-4d1d1e37a6bc
+
+interact_deescalate
+
+The task is prompt engineering for text classification. Carefully read the following training data. Develop rules that would lead a large language model to correctly classify sentences. The rules must be clear and concise. The rules must be causal rather than based on shallow correlations. The rules must generalize to new unseen sentences.
+
+Codebook
+---Preparation
+A) lower alert - The actor signaled a crisis or conflict was now less likely.
+B) de-mobilization - The actor halted or undid preparation of military forces for conflict.
+C) remove fortify - The actor weakened their military forces or took down defenses.
+D) end exercise - The actor ceased military training or practice. 
+E) end weapons test - The actor ceased testing weaponry. 
+---Maneuver
+F) withdraw from area - Troops were taken out of an area.
+G) withdraw behind border - Troops left a previously occupied area of the opponent's territory.
+H) end blockade - The actor stopped restricting the target's movement, mobility, or access.
+---Combat
+I) cease fire - The actor stopped engaging in active combat and is no longer attacking. This can occur through an end of conflict as well as a formal declaration/agreement between actors to stop violence.
+J) retreat - The actor withdrew forces during combat as a result of superior enemy firepower or after a defeat.
+---Strategic
+K) surrender - The actor ceased resistance to the opponent and submitted to their authority.
+L) declaration of peace - The actor declared an end to the conflict in favor of mutual peace.
+M) withdraw from war - The actor ceased involvement in military hostilities.
+N) switch sides in war - The actor changed its allies/opponents in the conflict.
+---Autonomy
+O) reduce control over - A colonist country (coded as initiator) provided more rights and autonomy to its colony (coded as target)
+P) decolonize - A colonist country (coded as initiator) withdrew from a colony (coded as target), leaving it independent
+Q) no de-escalatory interaction by armed actors
+
+Here are more examples. Update the rules for how to correctly classify sentences with new things you learned, especially about rules that didn't generalize to new data. As a reminder, here is the original codebook again.
+
+Codebook
+---Preparation
+A) lower alert - The actor signaled a crisis or conflict was now less likely.
+B) de-mobilization - The actor halted or undid preparation of military forces for conflict.
+C) remove fortify - The actor weakened their military forces or took down defenses.
+D) end exercise - The actor ceased military training or practice. 
+E) end weapons test - The actor ceased testing weaponry. 
+---Maneuver
+F) withdraw from area - Troops were taken out of an area.
+G) withdraw behind border - Troops left a previously occupied area of the opponent's territory.
+H) end blockade - The actor stopped restricting the target's movement, mobility, or access.
+---Combat
+I) cease fire - The actor stopped engaging in active combat and is no longer attacking. This can occur through an end of conflict as well as a formal declaration/agreement between actors to stop violence.
+J) retreat - The actor withdrew forces during combat as a result of superior enemy firepower or after a defeat.
+---Strategic
+K) surrender - The actor ceased resistance to the opponent and submitted to their authority.
+L) declaration of peace - The actor declared an end to the conflict in favor of mutual peace.
+M) withdraw from war - The actor ceased involvement in military hostilities.
+N) switch sides in war - The actor changed its allies/opponents in the conflict.
+---Autonomy
+O) reduce control over - A colonist country (coded as initiator) provided more rights and autonomy to its colony (coded as target)
+P) decolonize - A colonist country (coded as initiator) withdrew from a colony (coded as target), leaving it independent
+Q) no de-escalatory interaction by armed actors
+
+```{r}
+
+#This is already in the format I need, same sentence just shows up multiple times.
+events_agreed_wide <- readRDS("/media/skynet3/8tb_a/rwd_github_private/ICBeLLM/data_in/ICBe_V1.1_events_agreed.Rds")
+
+#interact_increasecoop
+
+i=80
+df1 <- events_agreed_long %>% 
+      filter(varname %in% c('interact_deescalate')) %>%
+      #filter(!value %in% c('covered by previous sentence')) %>%
+      dplyr::select(sentence_span_text, value_normalized) %>% distinct() %>% #filter(sentence_span_text %>% str_detect("\\.$")) %>%
+      #mutate(no_event= no_event %>% case_match( FALSE ~ "event", TRUE ~ "no event", .default = "no event") ) %>%
+      #mutate(example=paste(sentence_span_text,": ",no_event)) %>%
+      mutate(random=runif(n())) %>%
+      arrange(random) %>%
+      group_by(value_normalized) %>%
+      filter(row_number()>0 & row_number()<=5) %>% #downsample
+      arrange(random) %>%
+      ungroup() %>%
+      mutate(row=row_number()) %>%
+      filter(row_number()>i & row_number()<=(i+20)  ) 
+
+df2 <- events_agreed_long %>% 
+       group_by( sentence_span_text ) %>%
+       summarize( value_normalized = sum(varname %in% 'interact_deescalate')) %>%
+       filter(value_normalized==0) %>%
+       mutate(value_normalized="no de-escalatory interaction by armed actors") %>%
+       mutate(random=runif(n())) %>%
+       arrange(random) %>%  
+       filter(row_number()>i & row_number()<=(i+20)  ) %>%
+       mutate(act_cooperative="no de-escalatory interaction by armed actors")
+
+df <- bind_rows(df1, df2) %>% arrange(random) 
+
+df %>% dplyr::select(correct_answer=value_normalized, sentence=sentence_span_text) %>% knitr::kable('pipe') %>% str_replace_all('-{1,}','-') %>% str_replace_all(' {1,}',' ') %>% paste(collapse="\n") %>% writeLines()
+
+```
